@@ -12,7 +12,10 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import art, availability, boxes, builder, catalog, collection, config, db, details, export, formations, forces
+from . import (
+    art, availability, boxes, builder, catalog, collection, config, copies, db, details, export,
+    formations, forces,
+)
 from .kinds import KIND_LABELS, KINDS
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -85,11 +88,33 @@ def get_collection(conn, query, body):
         era=_first(query, "era"),
         tech_base=_first(query, "tech_base"),
         box=_first(query, "box"),
+        tag=_first(query, "tag"),
     )
 
 
 def get_boxes(conn, query, body):
     return collection.list_boxes(conn)
+
+
+def get_copies(conn, query, body, entry_id):
+    return copies.list_for(conn, int(entry_id))
+
+
+def post_copy(conn, query, body, entry_id):
+    return copies.add(conn, int(entry_id), body.get("note"), tag=body.get("tag", ""))
+
+
+def patch_copy(conn, query, body, copy_id):
+    return copies.update(conn, int(copy_id), note=body.get("note"), tag=body.get("tag"))
+
+
+def delete_copy(conn, query, body, copy_id):
+    copies.remove(conn, int(copy_id))
+    return {"removed": int(copy_id)}
+
+
+def get_copy_tags(conn, query, body):
+    return copies.list_tags(conn)
 
 
 def post_collection(conn, query, body):
@@ -162,7 +187,8 @@ def post_swap(conn, query, body, entry_id):
 
 def post_import(conn, query, body):
     return collection.import_text(
-        conn, body.get("text", ""), painted=bool(body.get("painted")), box=body.get("box", "")
+        conn, body.get("text", ""), painted=bool(body.get("painted")), box=body.get("box", ""),
+        mode=body.get("mode") or "name",
     )
 
 
@@ -239,6 +265,11 @@ ROUTES = [
     ("GET", r"/api/units/([^/]+)", get_unit_detail),
     ("GET", r"/api/collection/(\d+)/variants", get_variants),
     ("POST", r"/api/collection/(\d+)/swap", post_swap),
+    ("GET", r"/api/collection/(\d+)/copies", get_copies),
+    ("POST", r"/api/collection/(\d+)/copies", post_copy),
+    ("PATCH", r"/api/copies/(\d+)", patch_copy),
+    ("DELETE", r"/api/copies/(\d+)", delete_copy),
+    ("GET", r"/api/copy-tags", get_copy_tags),
     ("POST", r"/api/collection", post_collection),
     ("PATCH", r"/api/collection/(\d+)", patch_collection),
     ("DELETE", r"/api/collection/(\d+)", delete_collection),

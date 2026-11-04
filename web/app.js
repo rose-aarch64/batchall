@@ -57,7 +57,7 @@ function openModal(box, onClose) {
   const onKey = (e) => {
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(false); }
     else if (e.key === "Tab") {
-      const stops = [...box.querySelectorAll("button")];
+      const stops = [...box.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled])")];
       if (!stops.length) return;
       e.preventDefault();
       const i = stops.indexOf(document.activeElement);
@@ -106,7 +106,52 @@ function weaponTable(weapons) {
       h("td", {}, w.name), h("td", {}, w.location || ""), h("td", {}, w.qty), h("td", {}, w.damage || ""), h("td", {}, w.range || "")))));
 }
 
-function buildDetail(unit, close) {
+// Named copies of an owned mini: a paint note and an optional tag for each. Re-renders itself after a change.
+function copiesSection(entryId) {
+  const section = h("section", { class: "detail-section copies" });
+  const refresh = async () => {
+    await guarded(async () => {
+      const list = await api("GET", `/api/collection/${entryId}/copies`);
+      const owned = itemById(entryId)?.qty ?? list.length;
+      const change = (run) => async () => {
+        await guarded(run);
+        await loadCollection();
+        await refresh();
+      };
+      const note = h("input", { type: "text", placeholder: "Paint note, e.g. Wolf's Dragoons, Black Widow Company", "aria-label": "Paint note for a new copy", class: "copy-note" });
+      const tag = h("input", { type: "text", list: "tag-options", placeholder: "Tag (optional)", "aria-label": "Tag for a new copy", class: "copy-tag" });
+      const full = list.length >= owned;
+      const add = h("button", {
+        type: "button", class: "primary", disabled: full,
+        title: full ? "Every owned mini already has a name" : "Name another copy",
+        onclick: change(async () => {
+          await api("POST", `/api/collection/${entryId}/copies`, { note: note.value, tag: tag.value });
+        }),
+      }, "Name a copy");
+      section.replaceChildren(
+        h("h3", {}, "Your copies"),
+        h("p", { class: "muted small" }, `${list.length} of ${owned} owned ${owned === 1 ? "has" : "have"} a name. Unnamed minis stay a plain count.`),
+        list.map((c) => h("div", { class: "copy-row" },
+          h("input", {
+            type: "text", value: c.note, class: "copy-note", "aria-label": "Paint note",
+            onchange: (e) => change(() => api("PATCH", `/api/copies/${c.id}`, { note: e.target.value }))(),
+          }),
+          h("input", {
+            type: "text", value: c.tag, list: "tag-options", class: "copy-tag", placeholder: "Tag", "aria-label": "Tag",
+            onchange: (e) => change(() => api("PATCH", `/api/copies/${c.id}`, { tag: e.target.value }))(),
+          }),
+          h("button", {
+            type: "button", class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${c.note}`,
+            onclick: change(() => api("DELETE", `/api/copies/${c.id}`)),
+          }, "×"))),
+        h("div", { class: "copy-row" }, note, tag, add));
+    });
+  };
+  refresh();
+  return section;
+}
+
+function buildDetail(unit, close, entryId = null) {
   const s = unit.specs || {};
   const mv = s.movement || {};
   const heat = s.heat || {};
@@ -136,6 +181,7 @@ function buildDetail(unit, close) {
             stat("Tech", [s.level, s.tech_rating].filter(Boolean).join(" · ")),
             stat("Crew", s.crew), stat("Cost", s.cost != null ? `${s.cost.toLocaleString()} C-bills` : null))
         : h("p", { class: "muted" }, "No detail data yet. Run python3 -m bt catalog import once to load it.")),
+    entryId != null ? copiesSection(entryId) : null,
     h("div", { class: "detail-body" },
       h("div", {},
         unit.has_details ? detailSection("Weapons", weaponTable(s.weapons)) : null,
@@ -147,16 +193,16 @@ function buildDetail(unit, close) {
     h("p", { class: "muted small credit" }, "Unit data and text via MekBay and the MegaMek team."));
 }
 
-async function showUnitDetail(uuid) {
+async function showUnitDetail(uuid, entryId = null) {
   await guarded(async () => {
     const unit = await api("GET", `/api/units/${encodeURIComponent(uuid)}`);
-    const modal = openModal(buildDetail(unit, () => modal.close()));
+    const modal = openModal(buildDetail(unit, () => modal.close(), entryId));
     document.querySelector(".detail-close").focus();
   });
 }
 
 function nameLink(item) {
-  return h("button", { type: "button", class: "unit-link", title: "Show unit details", onclick: () => showUnitDetail(item.unit_uuid) }, item.name);
+  return h("button", { type: "button", class: "unit-link", title: "Show unit details", onclick: () => showUnitDetail(item.unit_uuid, item.id) }, item.name);
 }
 
 async function api(method, path, body) {
@@ -188,6 +234,7 @@ function currentFilters() {
     era: $("filter-era").value,
     faction: $("filter-faction").value,
     box: $("filter-box").value.trim(),
+    tag: $("filter-tag").value.trim(),
     painted_only: $("filter-painted").checked,
   };
 }
@@ -200,6 +247,7 @@ function filterQuery() {
   if (f.era) p.set("era", f.era);
   if (f.faction) p.set("faction", f.faction);
   if (f.box) p.set("box", f.box);
+  if (f.tag) p.set("tag", f.tag);
   if (f.painted_only) p.set("painted_only", "1");
   return p.toString();
 }
@@ -215,6 +263,8 @@ async function loadCollection() {
 
 async function loadBoxes() {
   state.boxes = await api("GET", "/api/boxes");
+  const tags = await api("GET", "/api/copy-tags");
+  $("tag-options").replaceChildren(...tags.map((t) => h("option", { value: t.tag }, `${t.copies} ${t.copies === 1 ? "copy" : "copies"}`)));
 }
 
 // ---------- suggestions ----------
@@ -484,17 +534,91 @@ function emptyMessage() {
     : "Your collection is empty. Use Add units to search the catalog, or Import to paste a list.";
 }
 
+// ---------- named copies in the roster ----------
+// Each named copy shows as its own row or card. The unnamed minis of that unit stay together as a stack.
+
+const stackQty = (item) => item.qty - item.copies.length;
+
+function activeTag() {
+  return $("filter-tag").value.trim().toLowerCase();
+}
+
+// With a tag filter on, only the copies carrying that tag are shown, and the stack is left out.
+function visibleCopies(item) {
+  const tag = activeTag();
+  return tag ? item.copies.filter((c) => c.tag.toLowerCase().includes(tag)) : item.copies;
+}
+
+async function changeCopy(run) {
+  await guarded(run);
+  await loadCollection(); // also puts a field back when the change was refused
+}
+
+async function unnameCopy(copy) {
+  if (!(await confirmDialog(`Remove the name "${copy.note}"? The mini stays in your collection.`, { confirmLabel: "Remove name", danger: true }))) return;
+  await changeCopy(() => api("DELETE", `/api/copies/${copy.id}`));
+}
+
+function copyFields(copy) {
+  const patch = (field) => (e) => changeCopy(() => api("PATCH", `/api/copies/${copy.id}`, { [field]: e.target.value }));
+  return h("div", { class: "copy-fields" },
+    h("input", { type: "text", class: "copy-note", value: copy.note, "aria-label": "Paint note", onchange: patch("note") }),
+    h("input", { type: "text", class: "copy-tag", value: copy.tag, list: "tag-options", placeholder: "Tag", "aria-label": "Tag", onchange: patch("tag") }));
+}
+
+function copyActions(item, copy) {
+  return [
+    h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray"),
+    " ",
+    h("button", { class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${copy.note}`, onclick: () => unnameCopy(copy) }, "×"),
+  ];
+}
+
+function buildCopyRow(item, copy) {
+  return h("tr", { class: "copy-line" },
+    h("td", {}, nameLink(item), copyFields(copy)),
+    h("td", {}, kindLabel(item)),
+    h("td", {}, item.box),
+    h("td", { class: "num" }, item.tons == null ? "" : Number(item.tons).toString()),
+    h("td", { class: "num" }, item.bv),
+    h("td", { class: "num" }, 1),
+    h("td", {}),
+    h("td", { class: "actions" }, copyActions(item, copy)));
+}
+
+function buildCopyCard(item, copy) {
+  return h("article", { class: "mini-card is-copy" },
+    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) }, artImage(item)),
+    h("div", { class: "card-body" },
+      h("div", { class: "card-name" }, nameLink(item)),
+      h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),
+      copyFields(copy),
+      item.box ? h("div", { class: "card-box" }, item.box) : null,
+      h("div", { class: "card-actions" }, copyActions(item, copy))));
+}
+
+function rowsFor(item) {
+  const named = visibleCopies(item).map((c) => buildCopyRow(item, c));
+  return activeTag() ? named : [buildRow(item), ...named];
+}
+
+function cardsFor(item) {
+  const named = visibleCopies(item).map((c) => buildCopyCard(item, c));
+  return activeTag() || stackQty(item) <= 0 ? named : [buildCard(item), ...named];
+}
+
 function buildRow(item) {
+  const named = item.copies.length;
   const qty = h("input", {
-    type: "number", min: 0, value: item.qty, "aria-label": `Quantity of ${item.name}`,
-    onchange: (e) => updateEntry(item.id, { qty: Number(e.target.value) }),
+    type: "number", min: 0, value: stackQty(item), "aria-label": `Quantity of ${item.name}${named ? " not named" : ""}`,
+    onchange: (e) => updateEntry(item.id, { qty: Number(e.target.value) + named }),
   });
   const painted = h("input", {
     type: "number", min: 0, max: item.qty, value: item.painted, "aria-label": `Painted ${item.name}`,
     onchange: (e) => updateEntry(item.id, { painted: Number(e.target.value) }),
   });
-  const nameCell = h("td", {}, nameLink(item));
-  return h("tr", {},
+  const nameCell = h("td", {}, nameLink(item), named ? h("span", { class: "muted small" }, " unnamed") : null);
+  return h("tr", { class: named && !stackQty(item) ? "all-named" : null },
     nameCell,
     h("td", {}, kindLabel(item)),
     h("td", {}, h("input", {
@@ -574,11 +698,11 @@ function buildCard(item) {
   const allPainted = item.qty > 0 && item.painted >= item.qty;
   return h("article", { class: "mini-card" + (allPainted ? " is-painted" : "") },
     // Mouse shortcut to the details. Keyboard users get the same thing from the name button.
-    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid) }, artImage(item)),
+    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) }, artImage(item)),
     h("div", { class: "card-body" },
       nameEl,
       h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),
-      h("div", { class: "card-foot" }, h("span", {}, `×${item.qty}`), h("span", {}, `${item.painted}/${item.qty} painted`)),
+      h("div", { class: "card-foot" }, h("span", {}, `×${stackQty(item)}`), h("span", {}, `${item.painted}/${item.qty} painted`)),
       item.box ? h("div", { class: "card-box" }, item.box) : null,
       h("div", { class: "card-actions" },
         h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray"),
@@ -602,10 +726,10 @@ function renderTable(items) {
     for (const [name, list] of groupsOf(items)) {
       const collapsed = state.collapsed.has(name);
       body.append(groupHeader(name, list, collapsed));
-      if (!collapsed) body.append(...list.map(buildRow));
+      if (!collapsed) body.append(...list.flatMap(rowsFor));
     }
   } else {
-    body.append(...items.map(buildRow));
+    body.append(...items.flatMap(rowsFor));
   }
   const message = emptyMessage();
   $("roster-empty").hidden = !message;
@@ -614,7 +738,7 @@ function renderTable(items) {
 
 function renderCards(items) {
   const message = emptyMessage();
-  cardGrid().replaceChildren(...(message ? [h("p", { class: "muted empty" }, message)] : items.map(buildCard)));
+  cardGrid().replaceChildren(...(message ? [h("p", { class: "muted empty" }, message)] : items.flatMap(cardsFor)));
 }
 
 function syncViewControls() {
@@ -664,11 +788,13 @@ function setupViewControls() {
 }
 
 async function updateEntry(id, patch) {
-  await guarded(async () => {
+  const ok = await guarded(async () => {
     await api("PATCH", `/api/collection/${id}`, patch);
     await loadCollection();
     await loadForces();
+    return true;
   });
+  if (!ok) await loadCollection(); // a refused change (like a quantity below the named copies) resets the field
 }
 
 // Switch a mini to another variant of the same chassis. A plastic mini can stand for any variant.
@@ -1000,6 +1126,7 @@ async function runImport() {
       text,
       painted: $("import-painted").checked,
       box: $("import-box").value.trim(),
+      mode: $("import-mode").value,
     });
     const out = $("import-result");
     out.replaceChildren();
@@ -1046,7 +1173,7 @@ function setupControls() {
 
   let filterTimer = null;
   const refilter = () => { clearTimeout(filterTimer); filterTimer = setTimeout(loadCollection, 200); };
-  for (const id of ["filter-q", "filter-box", "filter-kind", "filter-era", "filter-faction", "filter-painted"]) {
+  for (const id of ["filter-q", "filter-box", "filter-tag", "filter-kind", "filter-era", "filter-faction", "filter-painted"]) {
     $(id).addEventListener("input", refilter);
   }
   $("toggle-add").addEventListener("click", () => {
@@ -1060,6 +1187,21 @@ function setupControls() {
   $("tray-target").addEventListener("input", renderTray);
   $("tray-formation").addEventListener("change", renderTray);
   $("import-go").addEventListener("click", runImport);
+  $("import-file").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    await guarded(async () => {
+      $("import-text").value = (await file.text()).replace(/^﻿/, "");
+    });
+    event.target.value = "";
+  });
+  $("import-mode").addEventListener("change", () => {
+    const mul = $("import-mode").value === "mul";
+    $("import-mul-hint").hidden = !mul;
+    $("import-text").placeholder = mul
+      ? "1\n2x MUL 2\nhttps://masterunitlist.info/Unit/Details/4"
+      : "Atlas AS7-D\n2x Locust LCT-1V\nShadow Hawk SHD-2H";
+  });
 
   for (const th of document.querySelectorAll("th[data-sort]")) {
     th.addEventListener("click", () => {

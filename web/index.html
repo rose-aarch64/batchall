@@ -25,6 +25,8 @@
         <div class="toolbar">
           <input id="filter-q" type="search" placeholder="Search name, chassis, model" aria-label="Search collection">
           <input id="filter-box" type="search" data-suggest="box" autocomplete="off" placeholder="Box" aria-label="Filter by box" class="box-filter">
+          <input id="filter-tag" type="search" list="tag-options" autocomplete="off" placeholder="Copy tag" aria-label="Filter by copy tag" class="box-filter">
+          <datalist id="tag-options"></datalist>
           <select id="filter-kind" aria-label="Unit type"><option value="">All types</option></select>
           <select id="filter-era" aria-label="Era"><option value="">Any era</option></select>
           <select id="filter-faction" aria-label="Faction"><option value="">Any faction</option></select>
@@ -113,6 +115,16 @@
         <div class="panel">
           <h2>Import a list</h2>
           <p class="muted">One unit per line. Quantities as <code>2x Locust LCT-1V</code> or <code>Locust LCT-1V x2</code>. Names are matched against the catalog; close matches are shown for you to fix, never guessed.</p>
+          <label class="field">List format
+            <select id="import-mode">
+              <option value="name">Unit names</option>
+              <option value="mul">MUL ids or links</option>
+            </select>
+          </label>
+          <p id="import-mul-hint" class="muted" hidden>One per line: a MUL id (<code>1234</code>, <code>MUL 1234</code>) or a Master Unit List unit link. Quantities work the same way: <code>2x 1234</code>. Ids shared by several catalog entries, like battle armor squads, are listed for you to pick from by name.</p>
+          <label class="field">From a file (optional, fills the box below so you can review it)
+            <input id="import-file" type="file" accept=".txt,.csv,.tsv,.text,text/plain,text/csv">
+          </label>
           <textarea id="import-text" rows="10" placeholder="Atlas AS7-D&#10;2x Locust LCT-1V&#10;Shadow Hawk SHD-2H"></textarea>
           <label class="field">Box label for these units (optional)
             <input id="import-box" type="text" data-suggest="box" autocomplete="off" placeholder="e.g. Clan Invasion Force Pack">

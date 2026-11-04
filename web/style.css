@@ -349,6 +349,17 @@ table.weapons th { font-size: 15px; color: #cdc2c5; }
 table.weapons th, table.weapons td { padding: 6px 8px; }
 table.weapons th:first-child, table.weapons td:first-child { padding-left: 0; }
 .detail .credit { margin-top: 14px; }
+
+/* Named copies */
+.copy-row { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1.2fr) auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+.copy-row input { width: 100%; }
+.copy-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 6px; margin-top: 4px; }
+.copy-fields input { width: 100%; }
+tr.copy-line td:first-child { padding-left: 22px; border-left: 2px solid var(--accent); }
+tr.all-named { opacity: 0.6; }
+.mini-card.is-copy { border-left: 2px solid var(--accent); }
+.mini-card .copy-fields { grid-template-columns: minmax(0, 1fr); margin: 6px 0; }
+@media (max-width: 520px) { .copy-row { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 520px) { .detail-top { grid-template-columns: minmax(0, 1fr); } .detail .photo { max-width: 220px; } .modal.detail { padding: 16px; } }
 @keyframes fade-in { from { opacity: 0; } }
 

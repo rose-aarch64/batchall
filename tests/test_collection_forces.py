@@ -75,6 +75,29 @@ class CollectionTests(unittest.TestCase):
         qty = {i["name"]: i["qty"] for i in collection.list_collection(self.conn)}
         self.assertEqual(qty["Locust LCT-1V"], 3)
 
+    def test_import_mul_ids_and_links(self):
+        text = "1\n2x MUL 2\nhttps://masterunitlist.info/Unit/Details/4/shadow-hawk\n999\n# note\nnope"
+        result = collection.import_text(self.conn, text, mode="mul")
+        self.assertEqual([(a["name"], a["qty"]) for a in result["added"]],
+                         [("Atlas AS7-D", 1), ("Locust LCT-1V", 2), ("Shadow Hawk SHD-2H", 1)])
+        self.assertEqual(result["unmatched"], ["999", "nope"])
+
+    def test_import_mul_csv_rows_with_leading_id(self):
+        text = 'ID,Name\n"1","Atlas AS7-D"\n2,Locust LCT-1V,extra'
+        result = collection.import_text(self.conn, text, mode="mul")
+        self.assertEqual([a["name"] for a in result["added"]], ["Atlas AS7-D", "Locust LCT-1V"])
+        self.assertEqual(result["unmatched"], ["ID,Name"])
+
+    def test_import_mul_shared_id_is_ambiguous(self):
+        self.conn.execute("UPDATE units SET mul_id = 1 WHERE uuid = 'u-locust'")
+        result = collection.import_text(self.conn, "1", mode="mul")
+        self.assertEqual(result["added"], [])
+        self.assertEqual(sorted(result["ambiguous"][0]["candidates"]), ["Atlas AS7-D", "Locust LCT-1V"])
+
+    def test_import_rejects_unknown_mode(self):
+        with self.assertRaises(collection.CollectionError):
+            collection.import_text(self.conn, "1", mode="csv")
+
     def test_import_near_match_is_suggested_not_added(self):
         result = collection.import_text(self.conn, "Atlass AS7-D")
         self.assertEqual(result["added"], [])

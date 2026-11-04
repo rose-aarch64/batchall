@@ -102,6 +102,32 @@ class ServerTests(unittest.TestCase):
         status, boxes = self.request("GET", "/api/boxes")
         self.assertIn({"box": "Moved", "entries": 1}, boxes)
 
+    def test_copies_over_api(self):
+        status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
+        base = f"/api/collection/{entry['id']}/copies"
+        status, copy = self.request("POST", base, {"note": "Black Widow Company", "tag": "Black Widow Co"})
+        self.assertEqual((status, copy["note"], copy["tag"]), (200, "Black Widow Company", "Black Widow Co"))
+
+        status, listed = self.request("GET", base)
+        self.assertEqual([c["id"] for c in listed], [copy["id"]])
+        status, items = self.request("GET", "/api/collection?tag=widow")
+        self.assertEqual([(i["name"], i["copy_count"]) for i in items], [("Atlas AS7-D", 1)])
+        status, tags = self.request("GET", "/api/copy-tags")
+        self.assertEqual(tags, [{"tag": "Black Widow Co", "copies": 1}])
+
+        status, copy = self.request("PATCH", f"/api/copies/{copy['id']}", {"note": "Repainted"})
+        self.assertEqual((status, copy["note"]), (200, "Repainted"))
+
+        self.request("POST", base, {"note": "second"})
+        status, body = self.request("POST", base, {"note": "third"})
+        self.assertEqual(status, 400)
+        self.assertIn("already named", body["error"])
+
+        status, _ = self.request("DELETE", f"/api/copies/{copy['id']}")
+        self.assertEqual(status, 200)
+        status, listed = self.request("GET", base)
+        self.assertEqual([c["note"] for c in listed], ["second"])
+
     def test_box_catalog_and_variant_endpoints(self):
         conn = db.connect(self.db_path)
         with conn:

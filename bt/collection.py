@@ -10,7 +10,8 @@ from .catalog import unit_dict
 COLLECTION_SELECT = """
 SELECT c.id AS id, c.unit_uuid, c.qty, c.painted, c.notes, c.box,
        u.chassis, u.model, u.kind, u.type, u.subtype, u.tons, u.weight_class, u.bv, u.pv,
-       u.year, u.tech_base, u.role, u.squad_size, u.walk, u.jump, u.mul_id, u.uuid, u.art
+       u.year, u.tech_base, u.role, u.squad_size, u.walk, u.jump, u.mul_id, u.uuid, u.art,
+       (SELECT COUNT(*) FROM copies WHERE collection_id = c.id) AS copy_count
 FROM collection c JOIN units u ON u.uuid = c.unit_uuid
 """
 
@@ -25,11 +26,23 @@ def _row(row):
     return d
 
 
+def _attach_copies(conn, items):
+    """Give each row the named copies it carries, oldest first."""
+    by_entry = {}
+    for c in conn.execute("SELECT id, collection_id, note, tag FROM copies ORDER BY id"):
+        by_entry.setdefault(c["collection_id"], []).append(
+            {"id": c["id"], "note": c["note"], "tag": c["tag"]}
+        )
+    for item in items:
+        item["copies"] = by_entry.get(item["id"], [])
+    return items
+
+
 def get(conn, collection_id):
     row = conn.execute(COLLECTION_SELECT + " WHERE c.id = ?", (collection_id,)).fetchone()
     if row is None:
         raise CollectionError(f"no collection entry with id {collection_id}")
-    return _row(row)
+    return _attach_copies(conn, [_row(row)])[0]
 
 
 def _like(term):
@@ -38,9 +51,10 @@ def _like(term):
 
 
 def list_collection(
-    conn, q=None, kind=None, painted_only=False, faction=None, era=None, tech_base=None, box=None
+    conn, q=None, kind=None, painted_only=False, faction=None, era=None, tech_base=None, box=None,
+    tag=None,
 ):
-    """List owned units, optionally narrowed by text, kind, paint, faction/era, tech base or box."""
+    """List owned units, optionally narrowed by text, kind, paint, faction/era, tech base, box or copy tag."""
     clauses, params = [], []
     for term in (q or "").split():
         clauses.append("(u.chassis || ' ' || u.model) LIKE ? ESCAPE '\\'")
@@ -48,6 +62,11 @@ def list_collection(
     if box and box.strip():
         clauses.append("c.box LIKE ? ESCAPE '\\'")
         params.append(_like(box.strip()))
+    if tag and tag.strip():
+        clauses.append(
+            "EXISTS (SELECT 1 FROM copies cp WHERE cp.collection_id = c.id AND cp.tag LIKE ? ESCAPE '\\')"
+        )
+        params.append(_like(tag.strip()))
     if kind:
         clauses.append("u.kind = ?")
         params.append(kind)
@@ -60,7 +79,7 @@ def list_collection(
     rows = conn.execute(
         COLLECTION_SELECT + where + " ORDER BY u.kind, u.chassis, u.model", params
     ).fetchall()
-    items = [_row(r) for r in rows]
+    items = _attach_copies(conn, [_row(r) for r in rows])
 
     faction_row = availability.resolve_faction(conn, faction)
     era_row = availability.resolve_era(conn, era)
@@ -111,6 +130,11 @@ def update(conn, collection_id, qty=None, painted=None, notes=None, box=None):
     new_qty = current["qty"] if qty is None else qty
     new_painted = current["painted"] if painted is None else painted
     new_qty, new_painted = _clamp(new_qty, new_painted)
+    named = conn.execute(
+        "SELECT COUNT(*) FROM copies WHERE collection_id = ?", (collection_id,)
+    ).fetchone()[0]
+    if new_qty < named:
+        raise CollectionError(f"{named} copies are named, so remove a named copy before lowering the quantity")
     with conn:
         conn.execute(
             "UPDATE collection SET qty = ?, painted = ?, notes = ?, box = ? WHERE id = ?",
@@ -193,6 +217,7 @@ def swap(conn, collection_id, unit_uuid):
             "UPDATE collection SET qty = ?, painted = ?, notes = ?, box = ? WHERE id = ?",
             (qty, painted, notes, target["box"] or current["box"], target["id"]),
         )
+        conn.execute("UPDATE copies SET collection_id = ? WHERE collection_id = ?", (target["id"], collection_id))
         for force in conn.execute(
             "SELECT force_id, qty FROM force_units WHERE collection_id = ?", (collection_id,)
         ).fetchall():
@@ -257,19 +282,37 @@ def _parse_line(line):
     return line.strip(), max(1, qty)
 
 
-def import_text(conn, text, painted=False, box=""):
+_MUL_URL = re.compile(r"/Unit/Details/(\d+)", re.I)
+_MUL_ID = re.compile(r"^[\"']?(?:mul\s*)?#?\s*(\d+)\b", re.I)
+
+
+def _mul_id_from(text):
+    """Pull a MUL id out of ``1234``, ``MUL 1234``, ``#1234`` or a masterunitlist.info link."""
+    m = _MUL_URL.search(text) or _MUL_ID.match(text.strip())
+    return int(m.group(1)) if m else None
+
+
+def import_text(conn, text, painted=False, box="", mode="name"):
     """Add units from a plain list, one per line: ``Atlas AS7-D``, ``2x Locust LCT-1V``.
 
     Names are matched against the catalog. Exact matches are added; near matches
     and ties are reported back instead of guessed. ``box`` labels every added unit.
+
+    With ``mode="mul"`` each line is a Master Unit List id or unit link instead
+    (``1234``, ``2x MUL 1234``, ``https://masterunitlist.info/Unit/Details/1234/...``).
+    Ids that several catalog entries share are reported back as ambiguous.
     """
+    if mode not in ("name", "mul"):
+        raise CollectionError(f"unknown import mode: {mode}")
     catalog = [
-        (r["uuid"], f"{r['chassis']} {r['model']}".strip())
-        for r in conn.execute("SELECT uuid, chassis, model FROM units")
+        (r["uuid"], f"{r['chassis']} {r['model']}".strip(), r["mul_id"])
+        for r in conn.execute("SELECT uuid, chassis, model, mul_id FROM units")
     ]
-    by_norm = {}
-    for uuid, name in catalog:
+    by_norm, by_mul = {}, {}
+    for uuid, name, mul_id in catalog:
         by_norm.setdefault(_norm(name), []).append((uuid, name))
+        if mul_id is not None:
+            by_mul.setdefault(int(mul_id), []).append((uuid, name))
     norm_names = list(by_norm)
 
     added, unmatched, ambiguous = [], [], []
@@ -278,6 +321,17 @@ def import_text(conn, text, painted=False, box=""):
         if parsed is None:
             continue
         name, qty = parsed
+        if mode == "mul":
+            mul_id = _mul_id_from(name)
+            hits = by_mul.get(mul_id, []) if mul_id is not None else []
+            if len(hits) == 1:
+                entry = add(conn, hits[0][0], qty=qty, painted=qty if painted else 0, box=box)
+                added.append({"line": raw.strip(), "id": entry["id"], "name": entry["name"], "qty": qty})
+            elif hits:
+                ambiguous.append({"line": raw.strip(), "candidates": [n for _, n in hits[:6]]})
+            else:
+                unmatched.append(raw.strip())
+            continue
         key = _norm(name)
         hits = by_norm.get(key, [])
         if len(hits) == 1:

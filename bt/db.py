@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS copies (
     collection_id INTEGER NOT NULL REFERENCES collection(id) ON DELETE CASCADE,
     note TEXT NOT NULL,
     tag TEXT NOT NULL DEFAULT '',
+    faction TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_copies_collection ON copies(collection_id);
@@ -135,6 +137,11 @@ def _migrate(conn):
     if "card_units" not in columns:  # filled in by the next `boxes import`
         with conn:
             conn.execute("ALTER TABLE box_items ADD COLUMN card_units TEXT NOT NULL DEFAULT '[]'")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(copies)")}
+    for column in ("faction", "company"):  # empty until a named mini is given one
+        if column not in columns:
+            with conn:
+                conn.execute(f"ALTER TABLE copies ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(units)")}
     if "art" not in columns:  # filled in by the next `catalog import`
         with conn:

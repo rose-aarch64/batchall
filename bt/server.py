@@ -89,6 +89,8 @@ def get_collection(conn, query, body):
         tech_base=_first(query, "tech_base"),
         box=_first(query, "box"),
         tag=_first(query, "tag"),
+        copy_faction=_first(query, "copy_faction"),
+        copy_company=_first(query, "copy_company"),
     )
 
 
@@ -101,11 +103,17 @@ def get_copies(conn, query, body, entry_id):
 
 
 def post_copy(conn, query, body, entry_id):
-    return copies.add(conn, int(entry_id), body.get("note"), tag=body.get("tag", ""))
+    return copies.add(
+        conn, int(entry_id), body.get("note"), tag=body.get("tag", ""),
+        faction=body.get("faction", ""), company=body.get("company", ""),
+    )
 
 
 def patch_copy(conn, query, body, copy_id):
-    return copies.update(conn, int(copy_id), note=body.get("note"), tag=body.get("tag"))
+    return copies.update(
+        conn, int(copy_id), note=body.get("note"), tag=body.get("tag"),
+        faction=body.get("faction"), company=body.get("company"),
+    )
 
 
 def delete_copy(conn, query, body, copy_id):
@@ -115,6 +123,14 @@ def delete_copy(conn, query, body, copy_id):
 
 def get_copy_tags(conn, query, body):
     return copies.list_tags(conn)
+
+
+def get_copy_factions(conn, query, body):
+    return copies.list_values(conn, "faction")
+
+
+def get_copy_companies(conn, query, body):
+    return copies.list_values(conn, "company")
 
 
 def post_collection(conn, query, body):
@@ -270,6 +286,8 @@ ROUTES = [
     ("PATCH", r"/api/copies/(\d+)", patch_copy),
     ("DELETE", r"/api/copies/(\d+)", delete_copy),
     ("GET", r"/api/copy-tags", get_copy_tags),
+    ("GET", r"/api/copy-factions", get_copy_factions),
+    ("GET", r"/api/copy-companies", get_copy_companies),
     ("POST", r"/api/collection", post_collection),
     ("PATCH", r"/api/collection/(\d+)", patch_collection),
     ("DELETE", r"/api/collection/(\d+)", delete_collection),

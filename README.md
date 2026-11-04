@@ -74,6 +74,11 @@ fix. Nothing is guessed.
   units also join every Clan group that ever fields them. A mini can sit in several groups, since
   factions share units. Sort by name, type, BV, tons or debut year in either
   view. Compact density shrinks the table rows. Your choices are remembered.
+- **Named minis.** Open a unit's details and use Your copies to name individual minis. Each gets a
+  note, a faction and a company for the force it is painted for, and an optional tag. On a card a
+  named mini has a crimson strip with its company and faction, and the pencil opens its edit boxes.
+  The Copy tag, Mini faction and Mini company boxes filter by them. Mini faction is the force you
+  painted a mini for, which is separate from the Faction dropdown (who fields a unit in the game data).
 - **Artwork.** Cards show each unit's illustration, downloaded once from MekBay and cached under
   `data/art/`. Units with no art show a placeholder. `python3 -m bt art prefetch` downloads the images
   for your whole collection ahead of time.

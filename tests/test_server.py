@@ -102,6 +102,33 @@ class ServerTests(unittest.TestCase):
         status, boxes = self.request("GET", "/api/boxes")
         self.assertIn({"box": "Moved", "entries": 1}, boxes)
 
+    def test_copy_faction_and_company_over_api(self):
+        status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
+        base = f"/api/collection/{entry['id']}/copies"
+        status, copy = self.request(
+            "POST", base, {"note": "Gloss black", "faction": "Wolf's Dragoons", "company": "Black Widow Company"}
+        )
+        self.assertEqual((status, copy["faction"], copy["company"]), (200, "Wolf's Dragoons", "Black Widow Company"))
+
+        status, items = self.request("GET", "/api/collection?copy_faction=dragoons")
+        self.assertEqual([i["name"] for i in items], ["Atlas AS7-D"])
+        self.assertEqual(items[0]["copies"][0]["company"], "Black Widow Company")
+        status, items = self.request("GET", "/api/collection?copy_company=nothing")
+        self.assertEqual(items, [])
+        status, items = self.request("GET", "/api/collection?copy_faction=dragoons&copy_company=widow")
+        self.assertEqual(len(items), 1)
+
+        status, listed = self.request("GET", "/api/copy-factions")
+        self.assertEqual(listed, [{"value": "Wolf's Dragoons", "copies": 1}])
+        status, listed = self.request("GET", "/api/copy-companies")
+        self.assertEqual(listed, [{"value": "Black Widow Company", "copies": 1}])
+
+        status, copy = self.request("PATCH", f"/api/copies/{copy['id']}", {"company": "Gamma Company"})
+        self.assertEqual((status, copy["faction"], copy["company"]), (200, "Wolf's Dragoons", "Gamma Company"))
+        status, body = self.request("PATCH", f"/api/copies/{copy['id']}", {"note": "", "faction": "", "company": ""})
+        self.assertEqual(status, 400)
+        self.assertIn("needs a note", body["error"])
+
     def test_copies_over_api(self):
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
         base = f"/api/collection/{entry['id']}/copies"

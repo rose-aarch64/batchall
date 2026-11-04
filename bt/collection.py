@@ -29,9 +29,9 @@ def _row(row):
 def _attach_copies(conn, items):
     """Give each row the named copies it carries, oldest first."""
     by_entry = {}
-    for c in conn.execute("SELECT id, collection_id, note, tag FROM copies ORDER BY id"):
+    for c in conn.execute("SELECT id, collection_id, note, tag, faction, company FROM copies ORDER BY id"):
         by_entry.setdefault(c["collection_id"], []).append(
-            {"id": c["id"], "note": c["note"], "tag": c["tag"]}
+            {"id": c["id"], "note": c["note"], "tag": c["tag"], "faction": c["faction"], "company": c["company"]}
         )
     for item in items:
         item["copies"] = by_entry.get(item["id"], [])
@@ -104,9 +104,14 @@ def _like(term):
 
 def list_collection(
     conn, q=None, kind=None, painted_only=False, faction=None, era=None, tech_base=None, box=None,
-    tag=None,
+    tag=None, copy_faction=None, copy_company=None,
 ):
-    """List owned units, optionally narrowed by text, kind, paint, faction/era, tech base, box or copy tag."""
+    """List owned units, optionally narrowed by text, kind, paint, faction/era, tech base, box or copy tag.
+
+    ``faction`` is who fields a unit in the MekBay data. ``copy_faction`` and ``copy_company`` are the
+    force a named mini is painted for, matched as part of the text. When both are given, one named
+    copy must match both.
+    """
     clauses, params = [], []
     for term in (q or "").split():
         clauses.append("(u.chassis || ' ' || u.model) LIKE ? ESCAPE '\\'")
@@ -119,6 +124,15 @@ def list_collection(
             "EXISTS (SELECT 1 FROM copies cp WHERE cp.collection_id = c.id AND cp.tag LIKE ? ESCAPE '\\')"
         )
         params.append(_like(tag.strip()))
+    on_one_copy = []
+    for column, term in (("faction", copy_faction), ("company", copy_company)):
+        if term and term.strip():
+            on_one_copy.append(f"cp.{column} LIKE ? ESCAPE '\\'")
+            params.append(_like(term.strip()))
+    if on_one_copy:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM copies cp WHERE cp.collection_id = c.id AND " + " AND ".join(on_one_copy) + ")"
+        )
     if kind:
         clauses.append("u.kind = ?")
         params.append(kind)

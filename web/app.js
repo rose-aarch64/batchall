@@ -11,6 +11,7 @@ const state = {
   view: "table",
   compact: false,
   collapsed: new Set(),
+  editingCopy: null, // id of the named copy whose fields are open for editing
   tray: { units: new Map(), forceId: null },
 };
 
@@ -120,33 +121,41 @@ function copiesSection(entryId) {
         await loadCollection();
         await refresh();
       };
-      const note = h("input", { type: "text", placeholder: "Paint note, e.g. Wolf's Dragoons, Black Widow Company", "aria-label": "Paint note for a new copy", class: "copy-note" });
-      const tag = h("input", { type: "text", list: "tag-options", placeholder: "Tag (optional)", "aria-label": "Tag for a new copy", class: "copy-tag" });
+      const input = (placeholder, label, extra) => h("input", { type: "text", placeholder, "aria-label": label, class: "copy-note", ...extra });
+      const note = input("Note, e.g. gloss black with red trim", "Note for a new copy");
+      const faction = input("Faction, e.g. Wolf's Dragoons", "Faction for a new copy", { list: "copy-faction-options" });
+      const company = input("Company, e.g. Black Widow Company", "Company for a new copy", { list: "copy-company-options" });
+      const tag = input("Tag (optional)", "Tag for a new copy", { list: "tag-options" });
       const full = list.length >= owned;
       const add = h("button", {
         type: "button", class: "primary", disabled: full,
         title: full ? "Every owned mini already has a name" : "Name another copy",
         onclick: change(async () => {
-          await api("POST", `/api/collection/${entryId}/copies`, { note: note.value, tag: tag.value });
+          await api("POST", `/api/collection/${entryId}/copies`, {
+            note: note.value, tag: tag.value, faction: faction.value, company: company.value,
+          });
         }),
       }, "Name a copy");
       section.replaceChildren(
         h("h3", {}, "Your copies"),
         h("p", { class: "muted small" }, `${list.length} of ${owned} owned ${owned === 1 ? "has" : "have"} a name. Unnamed minis stay a plain count.`),
-        list.map((c) => h("div", { class: "copy-row" },
-          h("input", {
-            type: "text", value: c.note, class: "copy-note", "aria-label": "Paint note",
-            onchange: (e) => change(() => api("PATCH", `/api/copies/${c.id}`, { note: e.target.value }))(),
-          }),
-          h("input", {
-            type: "text", value: c.tag, list: "tag-options", class: "copy-tag", placeholder: "Tag", "aria-label": "Tag",
-            onchange: (e) => change(() => api("PATCH", `/api/copies/${c.id}`, { tag: e.target.value }))(),
-          }),
-          h("button", {
-            type: "button", class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${c.note}`,
-            onclick: change(() => api("DELETE", `/api/copies/${c.id}`)),
-          }, "×"))),
-        h("div", { class: "copy-row" }, note, tag, add));
+        // Spread the rows: replaceChildren turns an array argument into the text "[object HTMLDivElement]".
+        ...list.map((c) => {
+          const edit = (name, placeholder, label, extra) => h("input", {
+            type: "text", value: c[name], class: "copy-note", placeholder, "aria-label": label, ...extra,
+            onchange: (e) => change(() => api("PATCH", `/api/copies/${c.id}`, { [name]: e.target.value }))(),
+          });
+          return h("div", { class: "copy-row" },
+            edit("note", "Note", "Note"),
+            edit("faction", "Faction", "Faction", { list: "copy-faction-options" }),
+            edit("company", "Company", "Company", { list: "copy-company-options" }),
+            edit("tag", "Tag", "Tag", { list: "tag-options" }),
+            h("button", {
+              type: "button", class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${copyName(c)}`,
+              onclick: change(() => api("DELETE", `/api/copies/${c.id}`)),
+            }, "×"));
+        }),
+        h("div", { class: "copy-row" }, note, faction, company, tag, add));
     });
   };
   refresh();
@@ -237,6 +246,8 @@ function currentFilters() {
     faction: $("filter-faction").value,
     box: $("filter-box").value.trim(),
     tag: $("filter-tag").value.trim(),
+    copy_faction: $("filter-copy-faction").value.trim(),
+    copy_company: $("filter-copy-company").value.trim(),
     painted_only: $("filter-painted").checked,
   };
 }
@@ -250,6 +261,8 @@ function filterQuery() {
   if (f.faction) p.set("faction", f.faction);
   if (f.box) p.set("box", f.box);
   if (f.tag) p.set("tag", f.tag);
+  if (f.copy_faction) p.set("copy_faction", f.copy_faction);
+  if (f.copy_company) p.set("copy_company", f.copy_company);
   if (f.painted_only) p.set("painted_only", "1");
   return p.toString();
 }
@@ -267,6 +280,10 @@ async function loadBoxes() {
   state.boxes = await api("GET", "/api/boxes");
   const tags = await api("GET", "/api/copy-tags");
   $("tag-options").replaceChildren(...tags.map((t) => h("option", { value: t.tag }, `${t.copies} ${t.copies === 1 ? "copy" : "copies"}`)));
+  const [factions, companies] = await Promise.all([api("GET", "/api/copy-factions"), api("GET", "/api/copy-companies")]);
+  const options = (rows) => rows.map((r) => h("option", { value: r.value }, `${r.copies} ${r.copies === 1 ? "copy" : "copies"}`));
+  $("copy-faction-options").replaceChildren(...options(factions));
+  $("copy-company-options").replaceChildren(...options(companies));
 }
 
 // ---------- suggestions ----------
@@ -557,15 +574,31 @@ function emptyMessage() {
 
 const stackQty = (item) => item.qty - item.copies.length;
 
-function activeTag() {
-  return $("filter-tag").value.trim().toLowerCase();
+// The tag, mini faction and mini company boxes narrow by named copy. They match part of the text, ignoring case.
+function copyFilters() {
+  const lower = (id) => $(id).value.trim().toLowerCase();
+  return { tag: lower("filter-tag"), faction: lower("filter-copy-faction"), company: lower("filter-copy-company") };
 }
 
-// With a tag filter on, only the copies carrying that tag are shown, and the stack is left out.
+const copyFilterActive = () => Object.values(copyFilters()).some(Boolean);
+
+// With any of those filters on, only the copies that match all of them are shown, and the stack is left out.
 function visibleCopies(item) {
-  const tag = activeTag();
-  return tag ? item.copies.filter((c) => c.tag.toLowerCase().includes(tag)) : item.copies;
+  const f = copyFilters();
+  if (!copyFilterActive()) return item.copies;
+  return item.copies.filter((c) =>
+    c.tag.toLowerCase().includes(f.tag) && c.faction.toLowerCase().includes(f.faction) && c.company.toLowerCase().includes(f.company));
 }
+
+// What a named mini is called on its card: the company, with the faction under it. A copy that has
+// neither (named before those fields existed) falls back to its note.
+function copyHeading(copy) {
+  if (copy.company || copy.faction) return { main: copy.company || copy.faction, sub: copy.company ? copy.faction : "" };
+  return { main: copy.note, sub: "" };
+}
+
+const copyLine = (copy) => [copy.company, copy.faction].filter(Boolean).join(" · ") || copy.note;
+const copyName = (copy) => copy.note || copy.company || copy.faction;
 
 async function changeCopy(run) {
   await guarded(run);
@@ -573,28 +606,53 @@ async function changeCopy(run) {
 }
 
 async function unnameCopy(copy) {
-  if (!(await confirmDialog(`Remove the name "${copy.note}"? The mini stays in your collection.`, { confirmLabel: "Remove name", danger: true }))) return;
+  if (!(await confirmDialog(`Remove the name "${copyName(copy)}"? The mini stays in your collection.`, { confirmLabel: "Remove name", danger: true }))) return;
   await changeCopy(() => api("DELETE", `/api/copies/${copy.id}`));
 }
 
-function copyFields(copy) {
-  const patch = (field) => (e) => changeCopy(() => api("PATCH", `/api/copies/${copy.id}`, { [field]: e.target.value }));
-  return h("div", { class: "copy-fields" },
-    h("input", { type: "text", class: "copy-note", value: copy.note, "aria-label": "Paint note", onchange: patch("note") }),
-    h("input", { type: "text", class: "copy-tag", value: copy.tag, list: "tag-options", placeholder: "Tag", "aria-label": "Tag", onchange: patch("tag") }));
+// The boxes for editing one named mini. Each saves when you leave it. The page is not rebuilt until
+// Done, so tabbing from one box to the next keeps working.
+function copyEditor(copy) {
+  const save = (name) => async (e) => {
+    const value = e.target.value;
+    const saved = await guarded(async () => Object.assign(copy, await api("PATCH", `/api/copies/${copy.id}`, { [name]: value })));
+    if (!saved) e.target.value = copy[name]; // a refused change, like blanking the last label, puts the old text back
+  };
+  const field = (label, name, extra) => h("label", { class: "fld" }, label,
+    h("input", { type: "text", value: copy[name], "aria-label": label, onchange: save(name), ...extra }));
+  return h("div", { class: "copy-editor" },
+    field("Note", "note"),
+    field("Faction", "faction", { list: "copy-faction-options" }),
+    field("Company", "company", { list: "copy-company-options" }),
+    field("Tag", "tag", { list: "tag-options" }));
+}
+
+const tagPill = (copy) => (copy.tag ? h("span", { class: "tag-pill" }, copy.tag) : null);
+
+async function finishEditing() {
+  state.editingCopy = null;
+  await loadCollection(); // refreshes the suggestions and any filter the edit changed
 }
 
 function copyActions(item, copy) {
+  if (state.editingCopy === copy.id) {
+    return h("button", { class: "icon primary", title: "Finish editing", onclick: finishEditing }, "Done");
+  }
   return [
     h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray"),
     " ",
-    h("button", { class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${copy.note}`, onclick: () => unnameCopy(copy) }, "×"),
+    h("button", { class: "icon", title: "Edit this named mini", "aria-label": `Edit ${copyName(copy)}`, onclick: () => { state.editingCopy = copy.id; renderRoster(); } }, "✎"),
+    " ",
+    h("button", { class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${copyName(copy)}`, onclick: () => unnameCopy(copy) }, "×"),
   ];
 }
 
 function buildCopyRow(item, copy) {
+  const editing = state.editingCopy === copy.id;
   return h("tr", { class: "copy-line" },
-    h("td", {}, nameLink(item), copyFields(copy)),
+    h("td", {}, nameLink(item),
+      editing ? copyEditor(copy)
+        : h("div", { class: "copy-label", title: copy.note || null }, copyLine(copy), " ", tagPill(copy))),
     h("td", {}, kindLabel(item)),
     h("td", {}, item.box),
     h("td", { class: "num" }, item.tons == null ? "" : Number(item.tons).toString()),
@@ -604,25 +662,31 @@ function buildCopyRow(item, copy) {
     h("td", { class: "actions" }, copyActions(item, copy)));
 }
 
+// A named mini's card has a crimson strip under the photo naming its company and faction. The note and
+// tag show below the stats, and the pencil swaps them for the editing boxes.
 function buildCopyCard(item, copy) {
+  const editing = state.editingCopy === copy.id;
+  const heading = copyHeading(copy);
+  const noteLine = (copy.company || copy.faction) && copy.note ? h("div", { class: "copy-note-line" }, copy.note) : null;
   return h("article", { class: "mini-card is-copy" },
     h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) }, artImage(item)),
+    h("div", { class: "copy-strip" }, h("span", {}, heading.main), heading.sub ? h("small", {}, heading.sub) : null),
     h("div", { class: "card-body" },
       h("div", { class: "card-name" }, nameLink(item)),
       h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),
-      copyFields(copy),
+      editing ? copyEditor(copy) : [noteLine, tagPill(copy) ? h("div", {}, tagPill(copy)) : null],
       item.box ? h("div", { class: "card-box" }, item.box) : null,
       h("div", { class: "card-actions" }, copyActions(item, copy))));
 }
 
 function rowsFor(item) {
   const named = visibleCopies(item).map((c) => buildCopyRow(item, c));
-  return activeTag() ? named : [buildRow(item), ...named];
+  return copyFilterActive() ? named : [buildRow(item), ...named];
 }
 
 function cardsFor(item) {
   const named = visibleCopies(item).map((c) => buildCopyCard(item, c));
-  return activeTag() || stackQty(item) <= 0 ? named : [buildCard(item), ...named];
+  return copyFilterActive() || stackQty(item) <= 0 ? named : [buildCard(item), ...named];
 }
 
 function buildRow(item) {
@@ -1298,7 +1362,7 @@ function setupControls() {
 
   let filterTimer = null;
   const refilter = () => { clearTimeout(filterTimer); filterTimer = setTimeout(loadCollection, 200); };
-  for (const id of ["filter-q", "filter-box", "filter-tag", "filter-kind", "filter-era", "filter-faction", "filter-painted"]) {
+  for (const id of ["filter-q", "filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company", "filter-kind", "filter-era", "filter-faction", "filter-painted"]) {
     $(id).addEventListener("input", refilter);
   }
   $("toggle-add").addEventListener("click", () => {

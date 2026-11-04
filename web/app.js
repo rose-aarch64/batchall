@@ -6,6 +6,8 @@ const state = {
   boxes: [],
   forces: [],
   sort: { key: null, dir: 1 },
+  groupBy: "box", // which field to group by
+  groupOn: false, // whether grouping is switched on, so turning it off keeps the field
   view: "table",
   compact: false,
   collapsed: new Set(),
@@ -489,10 +491,10 @@ function sortedItems() {
 }
 
 // ---------- roster views ----------
-// Three views of the same filtered collection: a table, the table grouped by box, and a card grid.
+// Two views of the same filtered collection, a table and a card grid, either of which can be grouped by a chosen field.
 // The view, the density and which groups are collapsed are remembered between visits.
 
-const VIEWS = ["table", "grouped", "cards"];
+const VIEWS = ["table", "cards"];
 const PREFS_KEY = "bt.view";
 const SORT_CHOICES = {
   "": null,
@@ -500,12 +502,22 @@ const SORT_CHOICES = {
   kind: { key: "kind", dir: 1 },
   bv: { key: "bv", dir: -1 },
   tons: { key: "tons", dir: -1 },
+  year: { key: "year", dir: 1 },
 };
+const GROUP_BY_CHOICES = ["box", "era", "faction", "weight", "kind", "tech", "role", "painted"];
 
 function loadPrefs() {
   try {
     const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
     if (VIEWS.includes(saved.view)) state.view = saved.view;
+    if (GROUP_BY_CHOICES.includes(saved.groupBy)) state.groupBy = saved.groupBy;
+    // Grouped used to be a view of its own. It is now the table with a grouping, by box as before.
+    // Earlier versions had a Grouped view, then a "none" field choice. Both mean grouping was on or off.
+    if (typeof saved.groupOn === "boolean") state.groupOn = saved.groupOn;
+    else if (saved.view === "grouped") state.groupOn = true;
+    else state.groupOn = GROUP_BY_CHOICES.includes(saved.groupBy);
+    if (saved.view === "grouped") state.view = "table";
+    if (saved.sort && SORT_CHOICES[saved.sort]) state.sort = SORT_CHOICES[saved.sort];
     state.compact = Boolean(saved.compact);
     if (Array.isArray(saved.collapsed)) state.collapsed = new Set(saved.collapsed.map(String));
   } catch {
@@ -515,8 +527,10 @@ function loadPrefs() {
 
 function savePrefs() {
   try {
+    const sort = Object.entries(SORT_CHOICES).find(([, v]) => v && v.key === state.sort.key);
     localStorage.setItem(PREFS_KEY, JSON.stringify({
       view: state.view, compact: state.compact, collapsed: [...state.collapsed],
+      groupBy: state.groupBy, groupOn: state.groupOn, sort: sort ? sort[0] : "",
     }));
   } catch {
     // Not being able to remember the view is not worth an error message.
@@ -642,15 +656,77 @@ function buildRow(item) {
   );
 }
 
-// Boxes in name order, with entries that have no box last.
+// How the grouped view splits the collection. Each choice names the groups an entry belongs to
+// (several for faction groups, since a mini can be fielded by more than one) and a fixed order
+// for the groups, or null for name order. Groups that hold nothing are simply absent.
+const WEIGHT_ORDER = ["Ultra Light/PA(L)/Exoskeleton", "Light", "Medium", "Heavy", "Assault", "Colossal/Super-Heavy"];
+const FACTION_GROUP_ORDER = ["Inner Sphere", "IS Clan", "HW Clan", "Periphery", "Mercenary", "Other"];
+const PAINT_ORDER = ["Unpainted", "Partly painted", "Fully painted"];
+const PRE_ERA = "Before the first era";
+const NO_GROUP = {
+  box: "No box", era: "Unknown year", faction: "Unaffiliated", weight: "Unknown", kind: "Unknown",
+  tech: "Unknown", role: "No role", painted: "Unpainted",
+};
+
+// An era is named by the year the unit debuted. Years before the first era get their own group.
+function eraNames() {
+  return state.meta.eras.map((e) => `${e.name} (${e.from}–${e.to >= 9999 ? "on" : e.to})`);
+}
+
+function eraOf(item) {
+  const eras = state.meta.eras;
+  if (item.year == null) return null;
+  if (!eras.length) return PRE_ERA;
+  let found = -1;
+  eras.forEach((e, i) => { if (e.from <= item.year) found = i; });
+  return found < 0 ? PRE_ERA : eraNames()[found];
+}
+
+function paintOf(item) {
+  if (item.painted <= 0) return "Unpainted";
+  return item.painted >= item.qty ? "Fully painted" : "Partly painted";
+}
+
+const GROUPERS = {
+  box: { of: (i) => [i.box], order: null },
+  era: { of: (i) => [eraOf(i)], order: () => [PRE_ERA, ...eraNames()] },
+  faction: { of: (i) => (i.faction_groups.length ? i.faction_groups : [null]), order: () => FACTION_GROUP_ORDER },
+  weight: { of: (i) => [i.weight_class], order: () => WEIGHT_ORDER },
+  kind: { of: (i) => [kindLabel(i)], order: () => state.meta.kinds.map((k) => k.label) },
+  tech: { of: (i) => [i.tech_base], order: null },
+  role: { of: (i) => [i.role], order: null },
+  painted: { of: (i) => [paintOf(i)], order: () => PAINT_ORDER },
+};
+
+const isGrouped = () => state.groupOn;
+
+// Group names in their natural order, then any name the order list does not know, then the
+// "none of the above" group last.
 function groupsOf(items) {
+  if (!isGrouped()) return [];
+  const by = GROUPERS[state.groupBy];
+  const none = NO_GROUP[state.groupBy];
   const map = new Map();
   for (const item of items) {
-    const key = item.box || "No box";
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(item);
+    for (const name of by.of(item)) {
+      const key = name || none;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(item);
+    }
   }
-  return [...map.entries()].sort(([a], [b]) => (a === "No box") - (b === "No box") || a.localeCompare(b));
+  const order = by.order ? by.order() : [];
+  const rank = (name) => {
+    if (name === none) return Infinity;
+    const i = order.indexOf(name);
+    return i < 0 ? order.length : i;
+  };
+  return [...map.entries()].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
+// Collapsed groups are remembered per grouping, so "Clan" under tech base and under faction differ.
+// Box keeps the plain name so what people already collapsed still applies.
+function collapseKey(name) {
+  return state.groupBy === "box" ? name : `${state.groupBy}:${name}`;
 }
 
 function totals(list) {
@@ -665,19 +741,17 @@ function groupHeader(name, list, collapsed) {
   const t = totals(list);
   const pct = t.models ? Math.round((100 * t.painted) / t.models) : 0;
   const toggle = () => {
-    if (collapsed) state.collapsed.delete(name); else state.collapsed.add(name);
+    if (collapsed) state.collapsed.delete(collapseKey(name)); else state.collapsed.add(collapseKey(name));
     savePrefs();
     renderRoster();
   };
-  return h("tr", { class: "group-row" },
-    h("td", { colspan: 8 },
-      h("button", { class: "group-toggle", "aria-expanded": String(!collapsed), onclick: toggle },
-        h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"), " ",
-        h("strong", {}, name), " ",
-        h("span", { class: "group-meta" }, `${list.length} entries · ${t.models} models · ${t.bv.toLocaleString()} BV`), " ",
-        h("span", { class: "bar", "aria-hidden": "true", title: `${t.painted} of ${t.models} painted` },
-          h("i", { style: `width:${pct}%` })), " ",
-        h("span", { class: "group-meta" }, `${t.painted}/${t.models} painted`))));
+  return h("button", { class: "group-toggle", "aria-expanded": String(!collapsed), onclick: toggle },
+    h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"), " ",
+    h("strong", {}, name), " ",
+    h("span", { class: "group-meta" }, `${list.length} entries · ${t.models} models · ${t.bv.toLocaleString()} BV`), " ",
+    h("span", { class: "bar", "aria-hidden": "true", title: `${t.painted} of ${t.models} painted` },
+      h("i", { style: `width:${pct}%` })), " ",
+    h("span", { class: "group-meta" }, `${t.painted}/${t.models} painted`));
 }
 
 // The default picture is the unit's artwork. A unit with no art, or art that fails to load, gets a placeholder.
@@ -722,10 +796,10 @@ function renderTable(items) {
   $("card-grid")?.remove();
   const body = document.querySelector("#roster tbody");
   body.replaceChildren();
-  if (state.view === "grouped") {
+  if (isGrouped()) {
     for (const [name, list] of groupsOf(items)) {
-      const collapsed = state.collapsed.has(name);
-      body.append(groupHeader(name, list, collapsed));
+      const collapsed = state.collapsed.has(collapseKey(name));
+      body.append(h("tr", { class: "group-row" }, h("td", { colspan: 8 }, groupHeader(name, list, collapsed))));
       if (!collapsed) body.append(...list.flatMap(rowsFor));
     }
   } else {
@@ -736,9 +810,22 @@ function renderTable(items) {
   $("roster-empty").textContent = message;
 }
 
+// Ungrouped, the container is itself the grid. Grouped, it holds a header and a grid per group.
 function renderCards(items) {
   const message = emptyMessage();
-  cardGrid().replaceChildren(...(message ? [h("p", { class: "muted empty" }, message)] : items.flatMap(cardsFor)));
+  const container = cardGrid();
+  const grouped = isGrouped() && !message;
+  container.classList.toggle("card-grid", !grouped);
+  container.classList.toggle("card-groups", grouped);
+  if (message) { container.replaceChildren(h("p", { class: "muted empty" }, message)); return; }
+  if (!grouped) { container.replaceChildren(...items.flatMap(cardsFor)); return; }
+  container.replaceChildren(...groupsOf(items).flatMap(([name, list]) => {
+    const collapsed = state.collapsed.has(collapseKey(name));
+    return [
+      h("div", { class: "card-group-head" }, groupHeader(name, list, collapsed)),
+      collapsed ? null : h("div", { class: "card-grid" }, list.flatMap(cardsFor)),
+    ];
+  }));
 }
 
 function syncViewControls() {
@@ -750,8 +837,12 @@ function syncViewControls() {
     button.setAttribute("aria-pressed", String((button.dataset.compact === "1") === state.compact));
   }
   $("density-group").hidden = state.view === "cards";
-  $("group-actions").hidden = state.view !== "grouped";
-  $("sort-group").hidden = state.view !== "cards";
+  $("group-actions").hidden = !isGrouped();
+  $("group-by").value = state.groupBy;
+  for (const button of $("group-by-group").querySelectorAll("button[data-group]")) {
+    button.setAttribute("aria-pressed", String((button.dataset.group === "1") === state.groupOn));
+  }
+  $("group-by").classList.toggle("is-off", !state.groupOn);
   const current = Object.entries(SORT_CHOICES).find(([, v]) => v && v.key === state.sort.key);
   $("card-sort").value = current ? current[0] : "";
   const models = state.items.reduce((n, i) => n + i.qty, 0);
@@ -760,7 +851,8 @@ function syncViewControls() {
 
 function renderRoster() {
   document.body.classList.toggle("view-cards", state.view === "cards");
-  document.body.classList.toggle("view-grouped", state.view === "grouped");
+  // The group header already names the box, so the table's Box column would only repeat it.
+  document.body.classList.toggle("group-by-box", isGrouped() && state.view === "table" && state.groupBy === "box");
   document.body.classList.toggle("compact", state.compact && state.view !== "cards");
   const items = sortedItems();
   if (state.view === "cards") renderCards(items); else renderTable(items);
@@ -776,13 +868,31 @@ function setupViewControls() {
     button.addEventListener("click", () => { state.compact = button.dataset.compact === "1"; savePrefs(); renderRoster(); });
   }
   $("collapse-all").addEventListener("click", () => {
-    state.collapsed = new Set(groupsOf(state.items).map(([name]) => name));
+    for (const [name] of groupsOf(state.items)) state.collapsed.add(collapseKey(name));
     savePrefs();
     renderRoster();
   });
-  $("expand-all").addEventListener("click", () => { state.collapsed = new Set(); savePrefs(); renderRoster(); });
+  $("expand-all").addEventListener("click", () => {
+    for (const [name] of groupsOf(state.items)) state.collapsed.delete(collapseKey(name));
+    savePrefs();
+    renderRoster();
+  });
   $("card-sort").addEventListener("change", (e) => {
     state.sort = SORT_CHOICES[e.target.value] || { key: null, dir: 1 };
+    savePrefs();
+    renderRoster();
+  });
+  for (const button of $("group-by-group").querySelectorAll("button[data-group]")) {
+    button.addEventListener("click", () => {
+      state.groupOn = button.dataset.group === "1";
+      savePrefs();
+      renderRoster();
+    });
+  }
+  $("group-by").addEventListener("change", (e) => {
+    state.groupBy = e.target.value;
+    state.groupOn = true; // picking a field is asking for grouping
+    savePrefs();
     renderRoster();
   });
 }

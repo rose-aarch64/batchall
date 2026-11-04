@@ -65,8 +65,14 @@ fix. Nothing is guessed.
   labels. In the Add units panel, picking an official box adds every mini that comes in it. Minis
   that do not match exactly one unit go to a review step where you pick a variant or skip. In a
   table row or the filter, an official name only fills the label.
-- **Views.** Switch between Table, Grouped by box (collapsible sections with counts, total BV and a
-  painted progress bar) and Cards. Compact density shrinks the table rows. Your choice is remembered.
+- **Views.** Switch between Table and Cards. The Grouping Off/On switch turns grouping on and off,
+  and the dropdown beside it picks the field. Grouping splits either view into collapsible sections with
+  counts, total BV and a painted progress bar. The fields are box, era (by debut year), faction
+  group, weight class, type, tech base, role and paint status. Turning grouping off keeps your field,
+  and picking a field turns grouping on. Faction groups use the factions that field a unit in the
+  first era it appears, so later captures do not move a Clan mech into the Inner Sphere. A mini can
+  still sit in several groups, since factions share units. Sort by name, type, BV, tons or debut year in either
+  view. Compact density shrinks the table rows. Your choices are remembered.
 - **Artwork.** Cards show each unit's illustration, downloaded once from MekBay and cached under
   `data/art/`. Units with no art show a placeholder. `python3 -m bt art prefetch` downloads the images
   for your whole collection ahead of time.

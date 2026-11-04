@@ -38,11 +38,35 @@ def _attach_copies(conn, items):
     return items
 
 
+def _attach_faction_groups(conn, items):
+    """Give each row the faction groups (Inner Sphere, Clan, ...) that field its unit when it debuts, sorted.
+
+    Only the first era the unit appears in counts. Availability lists every faction that ever fields
+    a unit, so later captures and purchases would otherwise put a Clan mech in Inner Sphere.
+    A unit can still belong to several groups. One with no MUL id, or that no faction fields, gets none.
+    """
+    # mul id -> (year the first era starts, groups fielding it in that era)
+    first = {}
+    for r in conn.execute(
+        "SELECT f.grp AS grp, a.mul_ids AS mul_ids, e.year_from AS year FROM availability a "
+        "JOIN factions f ON f.id = a.faction_id JOIN eras e ON e.id = a.era_id WHERE f.grp IS NOT NULL"
+    ):
+        for mul_id in json.loads(r["mul_ids"]):
+            year, groups = first.get(mul_id, (None, set()))
+            if year is None or r["year"] < year:
+                first[mul_id] = (r["year"], {r["grp"]})
+            elif r["year"] == year:
+                groups.add(r["grp"])
+    for item in items:
+        item["faction_groups"] = sorted(first.get(item["mul_id"], (None, ()))[1])
+    return items
+
+
 def get(conn, collection_id):
     row = conn.execute(COLLECTION_SELECT + " WHERE c.id = ?", (collection_id,)).fetchone()
     if row is None:
         raise CollectionError(f"no collection entry with id {collection_id}")
-    return _attach_copies(conn, [_row(row)])[0]
+    return _attach_faction_groups(conn, _attach_copies(conn, [_row(row)]))[0]
 
 
 def _like(term):
@@ -79,7 +103,7 @@ def list_collection(
     rows = conn.execute(
         COLLECTION_SELECT + where + " ORDER BY u.kind, u.chassis, u.model", params
     ).fetchall()
-    items = _attach_copies(conn, [_row(r) for r in rows])
+    items = _attach_faction_groups(conn, _attach_copies(conn, [_row(r) for r in rows]))
 
     faction_row = availability.resolve_faction(conn, faction)
     era_row = availability.resolve_era(conn, era)

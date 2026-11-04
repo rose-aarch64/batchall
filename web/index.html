@@ -48,7 +48,6 @@
           <div class="group" role="group" aria-label="View">
             <span class="label">View</span>
             <button type="button" class="seg" data-view="table" aria-pressed="true">Table</button>
-            <button type="button" class="seg" data-view="grouped" aria-pressed="false">Grouped by box</button>
             <button type="button" class="seg" data-view="cards" aria-pressed="false">Cards</button>
           </div>
           <div id="density-group" class="group" role="group" aria-label="Row density">
@@ -56,11 +55,26 @@
             <button type="button" class="seg" data-compact="0" aria-pressed="true">Comfortable</button>
             <button type="button" class="seg" data-compact="1" aria-pressed="false">Compact</button>
           </div>
+          <div id="group-by-group" class="group" role="group" aria-label="Grouping">
+            <span class="label">Grouping</span>
+            <button type="button" class="seg" data-group="0" aria-pressed="true">Off</button>
+            <button type="button" class="seg" data-group="1" aria-pressed="false">On</button>
+            <select id="group-by" aria-label="Group by">
+              <option value="box">Box</option>
+              <option value="era">Era (debut)</option>
+              <option value="faction">Faction group</option>
+              <option value="weight">Weight class</option>
+              <option value="kind">Type</option>
+              <option value="tech">Tech base</option>
+              <option value="role">Role</option>
+              <option value="painted">Paint status</option>
+            </select>
+          </div>
           <div id="group-actions" class="group" role="group" aria-label="Groups" hidden>
             <button type="button" class="seg" id="collapse-all">Collapse all</button>
             <button type="button" class="seg" id="expand-all">Expand all</button>
           </div>
-          <label id="sort-group" class="group" hidden>
+          <label id="sort-group" class="group">
             <span class="label">Sort</span>
             <select id="card-sort">
               <option value="">Default order</option>
@@ -68,6 +82,7 @@
               <option value="kind">Type</option>
               <option value="bv">BV (high to low)</option>
               <option value="tons">Tons (heavy to light)</option>
+              <option value="year">Debut year (earliest first)</option>
             </select>
           </label>
           <span id="view-count" class="count" aria-live="polite"></span>

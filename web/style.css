@@ -231,7 +231,9 @@ td select { max-width: 320px; }
 .view-controls .label::before { content: "> "; }
 .view-controls .count { margin-left: auto; font-size: 12px; color: var(--muted); }
 
-/* Grouped by box */
+/* Grouped. The field dropdown sits after the Off/On switch and dims while grouping is off. */
+#group-by { margin-left: 8px; }
+#group-by.is-off { opacity: 0.45; }
 tr.group-row td { background: var(--row-hover); padding: 0; border-top: 1px solid var(--border); }
 .group-toggle { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 9px 14px; font: inherit; color: inherit; cursor: pointer; border-radius: 0; }
 .group-toggle:hover { background: rgba(127, 127, 127, 0.12); }
@@ -241,7 +243,10 @@ tr.group-row td { background: var(--row-hover); padding: 0; border-top: 1px soli
 .group-toggle .bar { display: inline-block; width: 90px; height: 7px; background: rgba(127, 127, 127, 0.3); vertical-align: middle; margin-right: 8px; }
 .group-toggle .bar i { display: block; height: 100%; background: var(--ok); }
 /* The group header already names the box, so the Box column would only repeat it. */
-body.view-grouped #roster th:nth-child(3), body.view-grouped #roster td:nth-child(3) { display: none; }
+body.group-by-box #roster th:nth-child(3), body.group-by-box #roster td:nth-child(3) { display: none; }
+/* Grouped cards: each group is a header bar over its own grid. */
+.card-group-head { background: var(--row-hover); border: 1px solid var(--border); margin-bottom: 12px; }
+.card-groups .card-grid { margin-bottom: 20px; }
 
 /* Compact density */
 body.compact td, body.compact th { padding-top: 2px; padding-bottom: 2px; font-size: 13px; }

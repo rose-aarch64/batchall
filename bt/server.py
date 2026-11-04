@@ -1,8 +1,10 @@
 """Local web server: a JSON API plus the static UI in ``web/``.
 
-Binds to loopback only. Mutating requests must send ``Content-Type: application/json``
+Binds to loopback unless told otherwise. Mutating requests must send ``Content-Type: application/json``
 (which browsers will not send cross-origin without a preflight), and the Host header must
-name this machine, which blocks DNS-rebinding attempts.
+name this machine (localhost, or the exact address the server was started on), which blocks
+DNS-rebinding attempts. There is no login, so anyone who can reach a non-loopback address can
+change the collection.
 """
 
 import json
@@ -19,6 +21,7 @@ from . import (
 from .kinds import KIND_LABELS, KINDS
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+WILDCARD_HOSTS = {"0.0.0.0", "::", ""}
 
 # Where cached artwork lives. make_server sets it; None means the default data folder.
 art_cache_dir = None
@@ -315,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
             host = urlparse("//" + (self.headers.get("Host") or "")).hostname
         except ValueError:
             return False
-        return host in LOCAL_HOSTS
+        return host in self.server.allowed_hosts
 
     def _send_json(self, data, status=HTTPStatus.OK):
         payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -422,6 +425,10 @@ def make_server(port=config.DEFAULT_PORT, host="127.0.0.1", db_path=None, art_di
     art_cache_dir = art_dir
     server = ThreadingHTTPServer((host, port), Handler)
     server.db_path = db_path
+    # Started on a specific address (a LAN address, to reach it from a phone), the server also answers
+    # to that address. A wildcard bind names none, so only localhost works there.
+    named = host.lower() if host and host not in WILDCARD_HOSTS else None
+    server.allowed_hosts = LOCAL_HOSTS | ({named} if named else set())
     return server
 
 

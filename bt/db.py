@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS copies (
     tag TEXT NOT NULL DEFAULT '',
     faction TEXT NOT NULL DEFAULT '',
     company TEXT NOT NULL DEFAULT '',
+    painted INTEGER NOT NULL DEFAULT 0 CHECK (painted IN (0, 1)),
+    box TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_copies_collection ON copies(collection_id);
@@ -142,6 +144,12 @@ def _migrate(conn):
         if column not in columns:
             with conn:
                 conn.execute(f"ALTER TABLE copies ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+    if "painted" not in columns:  # a named mini is unpainted until marked; the entry's count is unchanged
+        with conn:
+            conn.execute("ALTER TABLE copies ADD COLUMN painted INTEGER NOT NULL DEFAULT 0")
+    if "box" not in columns:  # empty means the mini sits in its entry's box
+        with conn:
+            conn.execute("ALTER TABLE copies ADD COLUMN box TEXT NOT NULL DEFAULT ''")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(units)")}
     if "art" not in columns:  # filled in by the next `catalog import`
         with conn:

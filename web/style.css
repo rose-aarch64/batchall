@@ -79,7 +79,8 @@ code { background: var(--bg); padding: 1px 5px; border-radius: var(--radius); }
 
 @keyframes panel-in { from { opacity: 0; transform: translateY(6px); } }
 #view-collection, #view-import { animation: panel-in 0.25s ease-out; }
-.panel:not([hidden]), .mini-card { animation: panel-in 0.25s ease-out both; }
+/* Cards are rebuilt on every change, so they must not animate in or each click would make them flash. */
+.panel:not([hidden]) { animation: panel-in 0.25s ease-out both; }
 
 .layout {
   display: grid;
@@ -276,8 +277,18 @@ body.view-cards .table-wrap { display: none; }
 .mini-card .card-meta { color: var(--muted); font-size: 12px; }
 .mini-card .card-foot { display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px; }
 .mini-card .card-box { font-size: 11px; color: var(--muted); border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 5px; }
-.mini-card .card-actions { display: flex; gap: 6px; margin-top: 8px; }
-.mini-card.is-painted { border-bottom: 3px solid var(--ok); }
+/* Buttons keep their labels on one line and wrap as whole buttons, so a named card's four actions stay compact. */
+.mini-card .card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.mini-card .card-actions button { white-space: nowrap; padding: 3px 9px; font-size: 12px; }
+.mini-card .card-actions .paint-toggle { display: inline-grid; place-items: center; padding: 3px 7px; }
+.paint-toggle.on { background: var(--ok); border-color: var(--ok); color: #0b1f14; }
+/* The photo and the strip keep their size whatever the body holds. */
+.mini-card .photo, .mini-card .copy-strip { flex: none; }
+.mini-card .photo { position: relative; }
+.paint-badge {
+  position: absolute; top: 6px; right: 6px; z-index: 1; width: 24px; height: 24px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--ok); color: #0b1f14; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); pointer-events: none;
+}
 .mini-card select { width: 100%; max-width: 100%; font-size: 12px; text-overflow: ellipsis; }
 
 @media (max-width: 520px) {
@@ -374,6 +385,9 @@ tr.all-named { opacity: 0.6; }
 .copy-editor { display: grid; gap: 6px; margin: 6px 0; }
 .copy-editor .fld { display: grid; gap: 2px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .copy-editor input { width: 100%; font-size: 13px; text-transform: none; letter-spacing: 0; }
+.copy-editor .remove-name { justify-self: start; white-space: nowrap; margin-top: 2px; }
+.fld.inline { display: flex; align-items: center; gap: 6px; }
+.copy-editor .fld.inline input, .copy-row .fld.inline input { width: auto; flex: 0 0 auto; }
 tr.copy-line .copy-editor { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 @media (max-width: 520px) { .detail-top { grid-template-columns: minmax(0, 1fr); } .detail .photo { max-width: 220px; } .modal.detail { padding: 16px; } }
 @keyframes fade-in { from { opacity: 0; } }

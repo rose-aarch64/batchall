@@ -9,6 +9,33 @@ from bt import collection, db
 
 
 class MigrationTests(unittest.TestCase):
+    def test_copies_without_painted_and_box_are_upgraded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "old.db")
+            old = sqlite3.connect(path)
+            old.executescript(
+                """
+                CREATE TABLE collection (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    unit_uuid TEXT NOT NULL UNIQUE, qty INTEGER NOT NULL DEFAULT 1,
+                    painted INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '',
+                    box TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE copies (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    collection_id INTEGER NOT NULL REFERENCES collection(id) ON DELETE CASCADE,
+                    note TEXT NOT NULL, tag TEXT NOT NULL DEFAULT '', faction TEXT NOT NULL DEFAULT '',
+                    company TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                INSERT INTO collection (unit_uuid, qty, painted) VALUES ('u1', 2, 1);
+                INSERT INTO copies (collection_id, note) VALUES (1, 'gloss');
+                """
+            )
+            old.commit()
+            old.close()
+
+            for _ in range(2):  # the second open must not add the columns again
+                conn = db.connect(path)
+                row = conn.execute("SELECT note, painted, box FROM copies").fetchone()
+                self.assertEqual((row["note"], row["painted"], row["box"]), ("gloss", 0, ""))
+                conn.close()
+
     def test_database_without_box_column_is_upgraded_and_keeps_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "old.db")

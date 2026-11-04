@@ -99,8 +99,10 @@ class CopiesTests(unittest.TestCase):
         self.assertEqual(
             rows["Atlas AS7-D"],
             [
-                {"id": first["id"], "note": "black", "tag": "Black Widow Co", "faction": "", "company": ""},
-                {"id": second["id"], "note": "red", "tag": "", "faction": "", "company": ""},
+                {"id": first["id"], "note": "black", "tag": "Black Widow Co", "faction": "", "company": "",
+                 "painted": False, "box": ""},
+                {"id": second["id"], "note": "red", "tag": "", "faction": "", "company": "",
+                 "painted": False, "box": ""},
             ],
         )
         self.assertEqual(collection.get(self.conn, locust["id"])["copies"], [])

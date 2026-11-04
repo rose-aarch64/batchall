@@ -79,6 +79,9 @@ fix. Nothing is guessed.
   named mini has a crimson strip with its company and faction, and the pencil opens its edit boxes.
   The Copy tag, Mini faction and Mini company boxes filter by them. Mini faction is the force you
   painted a mini for, which is separate from the Faction dropdown (who fields a unit in the game data).
+  A named mini can also be marked painted, kept in its own box (blank means its unit's box), and
+  switched to another variant on its own with its Variant button. The other minis of that unit stay
+  as they were. Box filters and box grouping still go by the unit's box.
 - **Artwork.** Cards show each unit's illustration, downloaded once from MekBay and cached under
   `data/art/`. Units with no art show a placeholder. `python3 -m bt art prefetch` downloads the images
   for your whole collection ahead of time.

@@ -29,10 +29,13 @@ def _row(row):
 def _attach_copies(conn, items):
     """Give each row the named copies it carries, oldest first."""
     by_entry = {}
-    for c in conn.execute("SELECT id, collection_id, note, tag, faction, company FROM copies ORDER BY id"):
-        by_entry.setdefault(c["collection_id"], []).append(
-            {"id": c["id"], "note": c["note"], "tag": c["tag"], "faction": c["faction"], "company": c["company"]}
-        )
+    for c in conn.execute(
+        "SELECT id, collection_id, note, tag, faction, company, painted, box FROM copies ORDER BY id"
+    ):
+        by_entry.setdefault(c["collection_id"], []).append({
+            "id": c["id"], "note": c["note"], "tag": c["tag"], "faction": c["faction"],
+            "company": c["company"], "painted": bool(c["painted"]), "box": c["box"],
+        })
     for item in items:
         item["copies"] = by_entry.get(item["id"], [])
     return items
@@ -203,6 +206,10 @@ def update(conn, collection_id, qty=None, painted=None, notes=None, box=None):
     ).fetchone()[0]
     if new_qty < named:
         raise CollectionError(f"{named} copies are named, so remove a named copy before lowering the quantity")
+    named_painted = conn.execute(
+        "SELECT COUNT(*) FROM copies WHERE collection_id = ? AND painted = 1", (collection_id,)
+    ).fetchone()[0]
+    new_painted = max(new_painted, named_painted)  # painted minis that are named still count as painted
     with conn:
         conn.execute(
             "UPDATE collection SET qty = ?, painted = ?, notes = ?, box = ? WHERE id = ?",

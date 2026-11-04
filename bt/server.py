@@ -109,6 +109,7 @@ def post_copy(conn, query, body, entry_id):
     return copies.add(
         conn, int(entry_id), body.get("note"), tag=body.get("tag", ""),
         faction=body.get("faction", ""), company=body.get("company", ""),
+        painted=bool(body.get("painted")), box=body.get("box", ""),
     )
 
 
@@ -116,7 +117,14 @@ def patch_copy(conn, query, body, copy_id):
     return copies.update(
         conn, int(copy_id), note=body.get("note"), tag=body.get("tag"),
         faction=body.get("faction"), company=body.get("company"),
+        painted=body.get("painted"), box=body.get("box"),
     )
+
+
+def post_copy_swap(conn, query, body, copy_id):
+    if not body.get("unit_uuid"):
+        raise ApiError("unit_uuid is required")
+    return copies.swap(conn, int(copy_id), body["unit_uuid"])
 
 
 def delete_copy(conn, query, body, copy_id):
@@ -166,6 +174,10 @@ def get_box_catalog(conn, query, body):
     return boxes.search_boxes(
         conn, _first(query, "q", ""), limit=min(_int(_first(query, "limit", 15), "limit"), 50)
     )
+
+
+def get_entry_boxes(conn, query, body, entry_id):
+    return boxes.for_unit(conn, collection.get(conn, int(entry_id))["unit_uuid"])
 
 
 def get_box_detail(conn, query, body, box_id):
@@ -277,6 +289,7 @@ ROUTES = [
     ("GET", r"/api/catalog/search", get_catalog_search),
     ("GET", r"/api/collection", get_collection),
     ("GET", r"/api/boxes", get_boxes),
+    ("GET", r"/api/collection/(\d+)/boxes", get_entry_boxes),
     ("GET", r"/api/box-catalog", get_box_catalog),
     ("GET", r"/api/box-catalog/(\d+)", get_box_detail),
     ("POST", r"/api/box-catalog/(\d+)/add", post_box_add),
@@ -287,6 +300,7 @@ ROUTES = [
     ("GET", r"/api/collection/(\d+)/copies", get_copies),
     ("POST", r"/api/collection/(\d+)/copies", post_copy),
     ("PATCH", r"/api/copies/(\d+)", patch_copy),
+    ("POST", r"/api/copies/(\d+)/swap", post_copy_swap),
     ("DELETE", r"/api/copies/(\d+)", delete_copy),
     ("GET", r"/api/copy-tags", get_copy_tags),
     ("GET", r"/api/copy-factions", get_copy_factions),

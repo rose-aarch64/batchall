@@ -421,6 +421,34 @@ def search_boxes(conn, query="", limit=15):
     return [dict(r) for r in rows]
 
 
+def for_unit(conn, unit_uuid):
+    """Official boxes tied to one unit, for suggesting a box label.
+
+    ``relation`` is ``mini`` when the box ships a miniature of exactly this variant, or ``card`` when it
+    only ships an Alpha Strike card for it. Boxes with the mini come first, then boxes by name.
+    """
+    found = {}
+    rows = conn.execute(
+        """
+        SELECT b.id, b.name, b.kind, i.unit_uuid, i.card_units
+        FROM boxes b JOIN box_items i ON i.box_id = b.id
+        WHERE i.unit_uuid = ? OR i.card_units LIKE ?
+        """,
+        (unit_uuid, f"%{unit_uuid}%"),  # a loose prefilter. The JSON check below is exact
+    )
+    for row in rows:
+        if row["unit_uuid"] == unit_uuid:
+            relation = "mini"
+        elif unit_uuid in json.loads(row["card_units"] or "[]"):
+            relation = "card"
+        else:
+            continue
+        entry = found.setdefault(row["id"], {"id": row["id"], "name": row["name"], "kind": row["kind"], "relation": relation})
+        if relation == "mini":
+            entry["relation"] = "mini"
+    return sorted(found.values(), key=lambda b: (b["relation"] != "mini", b["kind"] != "core", b["name"]))
+
+
 def get_box(conn, box_id):
     box = conn.execute("SELECT * FROM boxes WHERE id = ?", (box_id,)).fetchone()
     if box is None:

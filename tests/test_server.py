@@ -129,6 +129,46 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("needs a note", body["error"])
 
+    def test_copy_paint_box_and_variant_over_api(self):
+        conn = db.connect(self.db_path)
+        with conn:
+            conn.execute("DELETE FROM units WHERE uuid = 'u-atlas-k'")
+            conn.execute(
+                "INSERT INTO units (uuid, mul_id, chassis, model, kind, type, subtype, tons, weight_class, bv, pv, "
+                "year, tech_base, role) VALUES ('u-atlas-k', 99, 'Atlas', 'AS7-K', 'mech', 't', 's', 100, 'w', "
+                "1900, 10, 3025, 'Inner Sphere', 'Juggernaut')"
+            )
+        conn.close()
+
+        def drop_variant():
+            cleanup = db.connect(self.db_path)
+            with cleanup:
+                cleanup.execute("DELETE FROM collection WHERE unit_uuid = 'u-atlas-k'")
+                cleanup.execute("DELETE FROM units WHERE uuid = 'u-atlas-k'")
+            cleanup.close()
+
+        self.addCleanup(drop_variant)
+        status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2, "painted": 1})
+        status, copy = self.request(
+            "POST", f"/api/collection/{entry['id']}/copies", {"note": "gloss", "painted": True, "box": "Shelf"}
+        )
+        self.assertEqual((status, copy["painted"], copy["box"]), (200, True, "Shelf"))
+        status, items = self.request("GET", "/api/collection")
+        self.assertEqual(items[0]["painted"], 2)
+        self.assertEqual((items[0]["copies"][0]["painted"], items[0]["copies"][0]["box"]), (True, "Shelf"))
+
+        status, copy = self.request("PATCH", f"/api/copies/{copy['id']}", {"painted": False, "box": ""})
+        self.assertEqual((status, copy["painted"], copy["box"]), (200, False, ""))
+
+        status, body = self.request("POST", f"/api/copies/{copy['id']}/swap", {})
+        self.assertEqual(status, 400)
+        status, moved = self.request("POST", f"/api/copies/{copy['id']}/swap", {"unit_uuid": "u-atlas-k"})
+        self.assertEqual(status, 200)
+        status, items = self.request("GET", "/api/collection")
+        by_name = {i["name"]: i for i in items}
+        self.assertEqual(by_name["Atlas AS7-D"]["qty"], 1)
+        self.assertEqual([c["id"] for c in by_name["Atlas AS7-K"]["copies"]], [copy["id"]])
+
     def test_copies_over_api(self):
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
         base = f"/api/collection/{entry['id']}/copies"

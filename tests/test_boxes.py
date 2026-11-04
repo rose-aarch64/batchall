@@ -292,6 +292,13 @@ class ImportAndAddTests(unittest.TestCase):
         # The Awesome has no first-side card in this box, only the second side of the BattleMaster's.
         self.assertEqual(self.card_units("Core Box", "Awesome"), ["x-awesome"])
 
+    def test_for_unit_lists_boxes_with_the_mini_or_its_card(self):
+        mini = boxes.for_unit(self.conn, "u-atlas")
+        self.assertEqual([(b["name"], b["relation"]) for b in mini], [("Recon Lance", "mini")])
+        card_only = boxes.for_unit(self.conn, "x-atlas-k")
+        self.assertEqual([(b["name"], b["relation"]) for b in card_only], [("Recon Lance", "card")])
+        self.assertEqual(boxes.for_unit(self.conn, "u-timber"), [])
+
     def test_variant_picker_lists_card_variants_first(self):
         add_units(self.conn, [("x-loc-s", "Locust", "LCT-1S", "mech")])
         boxes.add_box(self.conn, self.box_id("Recon Lance"))

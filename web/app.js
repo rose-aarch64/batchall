@@ -126,6 +126,8 @@ function copiesSection(entryId) {
       const faction = input("Faction, e.g. Wolf's Dragoons", "Faction for a new copy", { list: "copy-faction-options" });
       const company = input("Company, e.g. Black Widow Company", "Company for a new copy", { list: "copy-company-options" });
       const tag = input("Tag (optional)", "Tag for a new copy", { list: "tag-options" });
+      const box = input("Box (optional, default is the entry's box)", "Box for a new copy", { "data-suggest": "box", "data-entry": entryId, autocomplete: "off" });
+      const painted = h("input", { type: "checkbox", "aria-label": "New copy is painted" });
       const full = list.length >= owned;
       const add = h("button", {
         type: "button", class: "primary", disabled: full,
@@ -133,6 +135,7 @@ function copiesSection(entryId) {
         onclick: change(async () => {
           await api("POST", `/api/collection/${entryId}/copies`, {
             note: note.value, tag: tag.value, faction: faction.value, company: company.value,
+            box: box.value, painted: painted.checked,
           });
         }),
       }, "Name a copy");
@@ -150,12 +153,18 @@ function copiesSection(entryId) {
             edit("faction", "Faction", "Faction", { list: "copy-faction-options" }),
             edit("company", "Company", "Company", { list: "copy-company-options" }),
             edit("tag", "Tag", "Tag", { list: "tag-options" }),
+            edit("box", "Box", "Box", { "data-suggest": "box", "data-entry": entryId, autocomplete: "off" }),
+            h("label", { class: "fld inline" }, "Painted", h("input", {
+              type: "checkbox", checked: c.painted, "aria-label": "Painted",
+              onchange: (e) => change(() => api("PATCH", `/api/copies/${c.id}`, { painted: e.target.checked }))(),
+            })),
             h("button", {
               type: "button", class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${copyName(c)}`,
               onclick: change(() => api("DELETE", `/api/copies/${c.id}`)),
             }, "×"));
         }),
-        h("div", { class: "copy-row" }, note, faction, company, tag, add));
+        h("div", { class: "copy-row" }, note, faction, company, tag, box,
+          h("label", { class: "fld inline" }, "Painted", painted), add));
     });
   };
   refresh();
@@ -269,6 +278,7 @@ function filterQuery() {
 
 async function loadCollection() {
   await guarded(async () => {
+    entryBoxes.clear(); // a variant switch can change which unit an entry holds
     state.items = await api("GET", "/api/collection?" + filterQuery());
     renderRoster();
     renderTray();
@@ -304,13 +314,24 @@ function fillInput(input, value) {
   suggest.picking = false;
 }
 
+// Official boxes tied to one collection entry's variant. The catalog does not change while the page is open.
+const entryBoxes = new Map();
+async function unitBoxes(entryId) {
+  if (!entryBoxes.has(entryId)) entryBoxes.set(entryId, await api("GET", `/api/collection/${entryId}/boxes`));
+  return entryBoxes.get(entryId);
+}
+
 function boxSource(addsOnPick) {
   return {
     minChars: 0,
     delay: 150,
     focusShowsAll: true, // clicking into a filled field lists your boxes so the label can be changed
-    query: async (term) => {
+    query: async (term, input) => {
       const t = term.toLowerCase();
+      // A box field on one of your minis lists the official boxes that ship that variant first.
+      const forUnit = input?.dataset.entry ? (await unitBoxes(input.dataset.entry))
+        .filter((b) => !t || b.name.toLowerCase().includes(t))
+        .map((b) => ({ type: "unit", ...b })) : [];
       const own = state.boxes
         .filter((b) => !t || b.box.toLowerCase().includes(t))
         .slice(0, 4)
@@ -320,14 +341,18 @@ function boxSource(addsOnPick) {
         const found = await api("GET", "/api/box-catalog?limit=8&q=" + encodeURIComponent(term));
         official = found.map((b) => ({ type: "official", ...b }));
       }
-      const officialNames = new Set(official.map((b) => b.name.toLowerCase()));
-      const items = [...own.filter((o) => !officialNames.has(o.name.toLowerCase())), ...official];
+      const taken = new Set(forUnit.map((b) => b.name.toLowerCase()));
+      official = official.filter((b) => !taken.has(b.name.toLowerCase()));
+      const officialNames = new Set([...taken, ...official.map((b) => b.name.toLowerCase())]);
+      const items = [...forUnit, ...own.filter((o) => !officialNames.has(o.name.toLowerCase())), ...official];
       const onlyExactOwn = items.length === 1 && items[0].type === "own" && items[0].name.toLowerCase() === t;
       return onlyExactOwn ? [] : items;
     },
     label: (b) => b.type === "own"
       ? [b.name, String(b.entries)]
-      : [b.name, `${b.kind === "core" ? "Box set" : "ForcePack"} · ${b.minis} minis`],
+      : b.type === "unit"
+        ? [b.name, b.relation === "mini" ? "has this mini" : "has this card"]
+        : [b.name, `${b.kind === "core" ? "Box set" : "ForcePack"} · ${b.minis} minis`],
     pick: (input, b) => {
       if (b.type === "official" && addsOnPick) {
         input.value = "";
@@ -443,7 +468,7 @@ async function refreshSuggest(fromFocus = false) {
   if (token !== suggest.token) return;
   let items;
   try {
-    items = await source.query(term);
+    items = await source.query(term, input);
   } catch (err) {
     if (token === suggest.token) { suggest.pending = false; toast(err.message, true); }
     return;
@@ -573,6 +598,8 @@ function emptyMessage() {
 // Each named copy shows as its own row or card. The unnamed minis of that unit stay together as a stack.
 
 const stackQty = (item) => item.qty - item.copies.length;
+// An entry's painted count covers every mini. The unnamed stack's share is what is left after the painted copies.
+const stackPainted = (item) => Math.max(0, Math.min(item.painted - item.copies.filter((c) => c.painted).length, stackQty(item)));
 
 // The tag, mini faction and mini company boxes narrow by named copy. They match part of the text, ignoring case.
 function copyFilters() {
@@ -607,16 +634,17 @@ async function changeCopy(run) {
 
 async function unnameCopy(copy) {
   if (!(await confirmDialog(`Remove the name "${copyName(copy)}"? The mini stays in your collection.`, { confirmLabel: "Remove name", danger: true }))) return;
+  state.editingCopy = null; // the editor goes away with the name
   await changeCopy(() => api("DELETE", `/api/copies/${copy.id}`));
 }
 
 // The boxes for editing one named mini. Each saves when you leave it. The page is not rebuilt until
 // Done, so tabbing from one box to the next keeps working.
-function copyEditor(copy) {
-  const save = (name) => async (e) => {
-    const value = e.target.value;
+function copyEditor(item, copy) {
+  const save = (name, read = (e) => e.target.value, restore = (e) => { e.target.value = copy[name]; }) => async (e) => {
+    const value = read(e);
     const saved = await guarded(async () => Object.assign(copy, await api("PATCH", `/api/copies/${copy.id}`, { [name]: value })));
-    if (!saved) e.target.value = copy[name]; // a refused change, like blanking the last label, puts the old text back
+    if (!saved) restore(e); // a refused change, like blanking the last label, puts the old text back
   };
   const field = (label, name, extra) => h("label", { class: "fld" }, label,
     h("input", { type: "text", value: copy[name], "aria-label": label, onchange: save(name), ...extra }));
@@ -624,8 +652,26 @@ function copyEditor(copy) {
     field("Note", "note"),
     field("Faction", "faction", { list: "copy-faction-options" }),
     field("Company", "company", { list: "copy-company-options" }),
-    field("Tag", "tag", { list: "tag-options" }));
+    field("Tag", "tag", { list: "tag-options" }),
+    field("Box", "box", { "data-suggest": "box", "data-entry": item.id, autocomplete: "off", placeholder: item.box || "none" }),
+    h("label", { class: "fld inline" }, "Painted", h("input", {
+      type: "checkbox", checked: copy.painted, "aria-label": "Painted",
+      onchange: save("painted", (e) => e.target.checked, (e) => { e.target.checked = copy.painted; }),
+    })),
+    h("button", {
+      type: "button", class: "icon danger remove-name", title: "Remove this name", "aria-label": `Remove name: ${copyName(copy)}`,
+      onclick: () => unnameCopy(copy),
+    }, "Remove this name"));
 }
+
+// Where a copy's box shows: its own, or the entry's when it has none.
+const copyBox = (item, copy) => copy.box || item.box;
+
+async function setCopy(copy, patch) {
+  await changeCopy(() => api("PATCH", `/api/copies/${copy.id}`, patch));
+}
+
+const swapCell = (button) => button.closest("article")?.querySelector(".card-name") || button.closest("tr").firstElementChild;
 
 const tagPill = (copy) => (copy.tag ? h("span", { class: "tag-pill" }, copy.tag) : null);
 
@@ -634,16 +680,18 @@ async function finishEditing() {
   await loadCollection(); // refreshes the suggestions and any filter the edit changed
 }
 
-function copyActions(item, copy) {
+function copyActions(item, copy, quickPaint = false) {
   if (state.editingCopy === copy.id) {
     return h("button", { class: "icon primary", title: "Finish editing", onclick: finishEditing }, "Done");
   }
   return [
     h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray"),
     " ",
-    h("button", { class: "icon", title: "Edit this named mini", "aria-label": `Edit ${copyName(copy)}`, onclick: () => { state.editingCopy = copy.id; renderRoster(); } }, "✎"),
+    quickPaint ? paintToggle(copy) : null,
+    quickPaint ? " " : null,
+    h("button", { class: "icon", title: "Switch this one mini to another variant", onclick: (e) => startSwap(item, swapCell(e.currentTarget), copy) }, "Variant"),
     " ",
-    h("button", { class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${copyName(copy)}`, onclick: () => unnameCopy(copy) }, "×"),
+    h("button", { class: "icon", title: "Edit this named mini", "aria-label": `Edit ${copyName(copy)}`, onclick: () => { state.editingCopy = copy.id; renderRoster(); } }, "✎"),
   ];
 }
 
@@ -651,14 +699,21 @@ function buildCopyRow(item, copy) {
   const editing = state.editingCopy === copy.id;
   return h("tr", { class: "copy-line" },
     h("td", {}, nameLink(item),
-      editing ? copyEditor(copy)
+      editing ? copyEditor(item, copy)
         : h("div", { class: "copy-label", title: copy.note || null }, copyLine(copy), " ", tagPill(copy))),
     h("td", {}, kindLabel(item)),
-    h("td", {}, item.box),
+    h("td", {}, h("input", {
+      type: "text", class: "box-input", value: copy.box, "data-suggest": "box", "data-entry": item.id, autocomplete: "off",
+      placeholder: item.box || "none", "aria-label": `Box for ${copyName(copy)}`,
+      onchange: (e) => setCopy(copy, { box: e.target.value }),
+    })),
     h("td", { class: "num" }, item.tons == null ? "" : Number(item.tons).toString()),
     h("td", { class: "num" }, item.bv),
     h("td", { class: "num" }, 1),
-    h("td", {}),
+    h("td", { class: "num" }, h("input", {
+      type: "checkbox", checked: copy.painted, "aria-label": `Painted: ${copyName(copy)}`,
+      onchange: (e) => setCopy(copy, { painted: e.target.checked }),
+    })),
     h("td", { class: "actions" }, copyActions(item, copy)));
 }
 
@@ -669,14 +724,15 @@ function buildCopyCard(item, copy) {
   const heading = copyHeading(copy);
   const noteLine = (copy.company || copy.faction) && copy.note ? h("div", { class: "copy-note-line" }, copy.note) : null;
   return h("article", { class: "mini-card is-copy" },
-    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) }, artImage(item)),
+    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) },
+      artImage(item), copy.painted ? paintBadge() : null),
     h("div", { class: "copy-strip" }, h("span", {}, heading.main), heading.sub ? h("small", {}, heading.sub) : null),
     h("div", { class: "card-body" },
       h("div", { class: "card-name" }, nameLink(item)),
       h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),
-      editing ? copyEditor(copy) : [noteLine, tagPill(copy) ? h("div", {}, tagPill(copy)) : null],
-      item.box ? h("div", { class: "card-box" }, item.box) : null,
-      h("div", { class: "card-actions" }, copyActions(item, copy))));
+      editing ? copyEditor(item, copy) : [noteLine, tagPill(copy) ? h("div", {}, tagPill(copy)) : null],
+      copyBox(item, copy) ? h("div", { class: "card-box" }, copyBox(item, copy)) : null,
+      h("div", { class: "card-actions" }, copyActions(item, copy, true))));
 }
 
 function rowsFor(item) {
@@ -696,15 +752,16 @@ function buildRow(item) {
     onchange: (e) => updateEntry(item.id, { qty: Number(e.target.value) + named }),
   });
   const painted = h("input", {
-    type: "number", min: 0, max: item.qty, value: item.painted, "aria-label": `Painted ${item.name}`,
-    onchange: (e) => updateEntry(item.id, { painted: Number(e.target.value) }),
+    type: "number", min: 0, max: stackQty(item), value: stackPainted(item), "aria-label": `Painted ${item.name}${named ? " not named" : ""}`,
+    // The entry's count also covers the painted copies, which are not in this box.
+    onchange: (e) => updateEntry(item.id, { painted: Number(e.target.value) + item.copies.filter((c) => c.painted).length }),
   });
   const nameCell = h("td", {}, nameLink(item), named ? h("span", { class: "muted small" }, " unnamed") : null);
   return h("tr", { class: named && !stackQty(item) ? "all-named" : null },
     nameCell,
     h("td", {}, kindLabel(item)),
     h("td", {}, h("input", {
-      type: "text", class: "box-input", value: item.box, "data-suggest": "box",
+      type: "text", class: "box-input", value: item.box, "data-suggest": "box", "data-entry": item.id,
       autocomplete: "off", placeholder: "none", "aria-label": `Box for ${item.name}`,
       onchange: (e) => updateEntry(item.id, { box: e.target.value }),
     })),
@@ -835,6 +892,27 @@ function groupHeader(name, list, collapsed) {
 }
 
 // The default picture is the unit's artwork. A unit with no art, or art that fails to load, gets a placeholder.
+// A paintbrush in the corner of a photo marks a painted mini.
+const BRUSH_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7 14c-1.66 0-3 1.34-3 3 0 1.31-1.16 2-2 2 .92 1.22 2.49 2 4 2 2.21 0 4-1.79 4-4 0-1.66-1.34-3-3-3zm13.71-9.37l-1.34-1.34a.996.996 0 0 0-1.41 0L9 12.25 11.75 15l8.96-8.96a.996.996 0 0 0 0-1.41z"/></svg>';
+
+function paintBadge(title = "Painted") {
+  const badge = h("span", { class: "paint-badge", title, role: "img", "aria-label": title });
+  badge.innerHTML = BRUSH_SVG;
+  return badge;
+}
+
+// One-click toggle for a named mini's painted flag, so the edit boxes are not needed for it.
+function paintToggle(copy) {
+  const button = h("button", {
+    type: "button", class: "icon paint-toggle" + (copy.painted ? " on" : ""), "aria-pressed": String(copy.painted),
+    title: copy.painted ? "Mark as unpainted" : "Mark as painted",
+    "aria-label": `${copy.painted ? "Unmark" : "Mark"} ${copyName(copy)} as painted`,
+    onclick: () => setCopy(copy, { painted: !copy.painted }),
+  });
+  button.innerHTML = BRUSH_SVG;
+  return button;
+}
+
 function artImage(item) {
   const placeholder = () => h("span", { class: "no-art" }, "No art yet");
   if (!item.has_art) return placeholder();
@@ -849,14 +927,15 @@ function artImage(item) {
 
 function buildCard(item) {
   const nameEl = h("div", { class: "card-name" }, nameLink(item));
-  const allPainted = item.qty > 0 && item.painted >= item.qty;
-  return h("article", { class: "mini-card" + (allPainted ? " is-painted" : "") },
+  const allPainted = stackQty(item) > 0 && stackPainted(item) >= stackQty(item);
+  return h("article", { class: "mini-card" },
     // Mouse shortcut to the details. Keyboard users get the same thing from the name button.
-    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) }, artImage(item)),
+    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) },
+      artImage(item), allPainted ? paintBadge("All painted") : null),
     h("div", { class: "card-body" },
       nameEl,
       h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),
-      h("div", { class: "card-foot" }, h("span", {}, `×${stackQty(item)}`), h("span", {}, `${item.painted}/${item.qty} painted`)),
+      h("div", { class: "card-foot" }, h("span", {}, `×${stackQty(item)}`), h("span", {}, `${stackPainted(item)}/${stackQty(item)} painted`)),
       item.box ? h("div", { class: "card-box" }, item.box) : null,
       h("div", { class: "card-actions" },
         h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray"),
@@ -987,7 +1066,7 @@ async function updateEntry(id, patch) {
 }
 
 // Switch a mini to another variant of the same chassis. A plastic mini can stand for any variant.
-async function startSwap(item, cell) {
+async function startSwap(item, cell, copy = null) {
   await guarded(async () => {
     const variants = await api("GET", `/api/collection/${item.id}/variants`);
     if (variants.length < 2) { toast(`No other variants of ${item.chassis} in the catalog`); return; }
@@ -1003,7 +1082,7 @@ async function startSwap(item, cell) {
          others.length ? h("optgroup", { label: "Other variants" }, others.map(option)) : null]
       : variants.map(option);
     const select = h("select", { "aria-label": `Variant of ${item.chassis}` }, choices);
-    select.addEventListener("change", () => swapVariant(item, variants.find((v) => v.uuid === select.value)));
+    select.addEventListener("change", () => swapVariant(item, variants.find((v) => v.uuid === select.value), copy));
     select.addEventListener("blur", renderRoster);
     select.addEventListener("keydown", (e) => { if (e.key === "Escape") renderRoster(); });
     // A card keeps its name showing and puts the picker under it. A table cell swaps itself for the picker.
@@ -1012,7 +1091,19 @@ async function startSwap(item, cell) {
   });
 }
 
-async function swapVariant(item, variant) {
+async function swapVariant(item, variant, copy = null) {
+  if (copy) { // one named mini moves; the rest of the entry stays put
+    await guarded(async () => {
+      await api("POST", `/api/copies/${copy.id}/swap`, { unit_uuid: variant.uuid });
+      toast(`Switched ${copyName(copy)} to ${variant.name}`);
+      state.editingCopy = null;
+      await loadCollection();
+      if (!itemById(item.id)) state.tray.units.delete(item.id); // the old entry goes when its last mini moves
+      await loadForces();
+    });
+    renderRoster();
+    return;
+  }
   const owned = state.items.find((i) => i.unit_uuid === variant.uuid && i.id !== item.id);
   if (owned && !(await confirmDialog(`You already own ${variant.name}. Merge these into it?`, { confirmLabel: "Merge" }))) { renderRoster(); return; }
   await guarded(async () => {

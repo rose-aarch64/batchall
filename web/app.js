@@ -991,7 +991,10 @@ async function startSwap(item, cell) {
   await guarded(async () => {
     const variants = await api("GET", `/api/collection/${item.id}/variants`);
     if (variants.length < 2) { toast(`No other variants of ${item.chassis} in the catalog`); return; }
-    const option = (v) => h("option", { value: v.uuid, selected: v.current }, `${v.name}  ·  ${v.bv} BV`);
+    // On a card the chassis is already showing and the picker is narrow, so list just the model and BV.
+    const onCardView = cell.classList.contains("card-name");
+    const label = (v) => (onCardView && v.name.startsWith(item.chassis) ? v.name.slice(item.chassis.length).trim() || v.name : v.name);
+    const option = (v) => h("option", { value: v.uuid, selected: v.current, title: v.name }, `${label(v)}  ·  ${v.bv} BV`);
     const onCard = variants.filter((v) => v.on_card);
     const others = variants.filter((v) => !v.on_card);
     // Variants the mini's official box has a card for go first, in their own group.
@@ -1003,7 +1006,8 @@ async function startSwap(item, cell) {
     select.addEventListener("change", () => swapVariant(item, variants.find((v) => v.uuid === select.value)));
     select.addEventListener("blur", renderRoster);
     select.addEventListener("keydown", (e) => { if (e.key === "Escape") renderRoster(); });
-    cell.replaceChildren(select);
+    // A card keeps its name showing and puts the picker under it. A table cell swaps itself for the picker.
+    if (onCardView) cell.append(select); else cell.replaceChildren(select);
     select.focus();
   });
 }

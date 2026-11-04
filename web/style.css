@@ -269,14 +269,16 @@ body.view-cards .table-wrap { display: none; }
 /* The artwork is black line art, so it sits on white in either color scheme. */
 .mini-card .photo.has-art { background: #fff; position: relative; overflow: hidden; }
 .mini-card .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 8px; box-sizing: border-box; }
-.mini-card .card-body { padding: 9px 11px 11px; display: grid; gap: 3px; flex: 1; align-content: start; }
+/* minmax(0, 1fr) keeps the one column as wide as the card. Without it a wide child, like the variant
+   picker, stretches the column past the card and gets clipped. */
+.mini-card .card-body { padding: 9px 11px 11px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; flex: 1; align-content: start; }
 .mini-card .card-name { font-weight: 600; font-size: 13px; line-height: 1.3; }
 .mini-card .card-meta { color: var(--muted); font-size: 12px; }
 .mini-card .card-foot { display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px; }
 .mini-card .card-box { font-size: 11px; color: var(--muted); border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 5px; }
 .mini-card .card-actions { display: flex; gap: 6px; margin-top: 8px; }
 .mini-card.is-painted { border-bottom: 3px solid var(--ok); }
-.mini-card select { max-width: 100%; }
+.mini-card select { width: 100%; max-width: 100%; font-size: 12px; text-overflow: ellipsis; }
 
 @media (max-width: 520px) {
   .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }

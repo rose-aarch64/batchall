@@ -38,15 +38,21 @@ def _attach_copies(conn, items):
     return items
 
 
+CLAN_GROUPS = ("IS Clan", "HW Clan")  # MekBay's names for the invading and the homeworld Clans
+
+
 def _attach_faction_groups(conn, items):
     """Give each row the faction groups (Inner Sphere, Clan, ...) that field its unit when it debuts, sorted.
 
     Only the first era the unit appears in counts. Availability lists every faction that ever fields
     a unit, so later captures and purchases would otherwise put a Clan mech in Inner Sphere.
-    A unit can still belong to several groups. One with no MUL id, or that no faction fields, gets none.
+    A Clan-tech unit also joins every Clan group that fields it in any era, since one Clan group
+    often adopts a design an era after another. A unit can belong to several groups. One with no
+    MUL id, or that no faction fields, gets none.
     """
     # mul id -> (year the first era starts, groups fielding it in that era)
     first = {}
+    clan_ever = {}  # mul id -> Clan groups fielding it in any era
     for r in conn.execute(
         "SELECT f.grp AS grp, a.mul_ids AS mul_ids, e.year_from AS year FROM availability a "
         "JOIN factions f ON f.id = a.faction_id JOIN eras e ON e.id = a.era_id WHERE f.grp IS NOT NULL"
@@ -57,8 +63,13 @@ def _attach_faction_groups(conn, items):
                 first[mul_id] = (r["year"], {r["grp"]})
             elif r["year"] == year:
                 groups.add(r["grp"])
+            if r["grp"] in CLAN_GROUPS:
+                clan_ever.setdefault(mul_id, set()).add(r["grp"])
     for item in items:
-        item["faction_groups"] = sorted(first.get(item["mul_id"], (None, ()))[1])
+        groups = set(first.get(item["mul_id"], (None, ()))[1])
+        if item["tech_base"] == "Clan":
+            groups |= clan_ever.get(item["mul_id"], set())
+        item["faction_groups"] = sorted(groups)
     return items
 
 

@@ -25,6 +25,35 @@ class FactionGroupTests(unittest.TestCase):
         self.conn.execute("INSERT INTO availability VALUES (1, 14, ?)", (json.dumps([5]),))
         self.assertEqual(self.groups("u-timber"), ["Clan"])
 
+    def add_clans(self):
+        self.conn.execute("INSERT INTO factions (id, name, grp) VALUES (3, 'Clan Jade Falcon', 'IS Clan')")
+        self.conn.execute("INSERT INTO factions (id, name, grp) VALUES (4, 'Clan Star Adder', 'HW Clan')")
+
+    def test_clan_tech_unit_joins_every_clan_group_that_ever_fields_it(self):
+        import json
+
+        # Two invading Clans field the Elemental first. A homeworld Clan picks it up an era later.
+        self.add_clans()
+        self.conn.execute("INSERT INTO availability VALUES (3, 10, ?)", (json.dumps([8]),))
+        self.conn.execute("INSERT INTO availability VALUES (4, 13, ?)", (json.dumps([8]),))
+        self.assertEqual(self.groups("u-elemental"), ["HW Clan", "IS Clan"])
+
+    def test_clan_tech_unit_still_ignores_later_inner_sphere_captures(self):
+        import json
+
+        self.add_clans()
+        self.conn.execute("INSERT INTO eras (id, name, year_from, year_to) VALUES (14, 'Jihad', 3068, 3080)")
+        self.conn.execute("INSERT INTO availability VALUES (3, 10, ?)", (json.dumps([5]),))
+        self.conn.execute("INSERT INTO availability VALUES (1, 14, ?)", (json.dumps([5]),))
+        self.assertEqual(self.groups("u-timber"), ["IS Clan"])
+
+    def test_inner_sphere_tech_unit_does_not_gain_clan_groups_later(self):
+        import json
+
+        self.add_clans()
+        self.conn.execute("INSERT INTO availability VALUES (3, 13, ?)", (json.dumps([1]),))
+        self.assertEqual(self.groups("u-atlas"), ["IS"])
+
     def test_eras_are_ordered_by_year_not_by_id(self):
         import json
 

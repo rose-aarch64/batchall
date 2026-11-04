@@ -70,8 +70,9 @@ fix. Nothing is guessed.
   counts, total BV and a painted progress bar. The fields are box, era (by debut year), faction
   group, weight class, type, tech base, role and paint status. Turning grouping off keeps your field,
   and picking a field turns grouping on. Faction groups use the factions that field a unit in the
-  first era it appears, so later captures do not move a Clan mech into the Inner Sphere. A mini can
-  still sit in several groups, since factions share units. Sort by name, type, BV, tons or debut year in either
+  first era it appears, so later captures do not move a Clan mech into the Inner Sphere. Clan-tech
+  units also join every Clan group that ever fields them. A mini can sit in several groups, since
+  factions share units. Sort by name, type, BV, tons or debut year in either
   view. Compact density shrinks the table rows. Your choices are remembered.
 - **Artwork.** Cards show each unit's illustration, downloaded once from MekBay and cached under
   `data/art/`. Units with no art show a placeholder. `python3 -m bt art prefetch` downloads the images

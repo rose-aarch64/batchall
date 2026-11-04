@@ -399,12 +399,16 @@ function placeSuggest() {
   if (!input || el.hidden) return;
   const rect = input.getBoundingClientRect();
   if (rect.bottom < 0 || rect.top > window.innerHeight) { closeSuggest(); return; } // scrolled out of view
+  // The page is zoomed with CSS (html { zoom }). getBoundingClientRect reports on-screen pixels, but a
+  // fixed element's left, top and width are scaled by the zoom again, so convert back before setting them.
+  const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+  const height = el.offsetHeight * zoom;
   const roomBelow = window.innerHeight - rect.bottom - 8;
-  const flip = el.offsetHeight > roomBelow && rect.top > roomBelow;
+  const flip = height > roomBelow && rect.top > roomBelow;
   Object.assign(el.style, {
-    left: `${rect.left}px`,
-    top: flip ? `${Math.max(8, rect.top - el.offsetHeight - 2)}px` : `${rect.bottom + 2}px`,
-    minWidth: `${rect.width}px`,
+    left: `${rect.left / zoom}px`,
+    top: `${(flip ? Math.max(8, rect.top - height - 2) : rect.bottom + 2) / zoom}px`,
+    minWidth: `${rect.width / zoom}px`,
   });
 }
 

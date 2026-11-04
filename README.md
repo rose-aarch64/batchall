@@ -67,7 +67,7 @@ fix. Nothing is guessed.
   table row or the filter, an official name only fills the label.
 - **Views.** Switch between Table and Cards. The Grouping Off/On switch turns grouping on and off,
   and the dropdown beside it picks the field. Grouping splits either view into collapsible sections with
-  counts, total BV and a painted progress bar. The fields are box, era (by debut year), faction
+  counts, total BV and a painted progress bar. The fields are box, era (by debut year), era (every era the unit is available in, so a mini can appear under many), faction
   group, weight class, type, tech base, role and paint status. Turning grouping off keeps your field,
   and picking a field turns grouping on. Faction groups use the factions that field a unit in the
   first era it appears, so later captures do not move a Clan mech into the Inner Sphere. Clan-tech

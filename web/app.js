@@ -504,7 +504,7 @@ const SORT_CHOICES = {
   tons: { key: "tons", dir: -1 },
   year: { key: "year", dir: 1 },
 };
-const GROUP_BY_CHOICES = ["box", "era", "faction", "weight", "kind", "tech", "role", "painted"];
+const GROUP_BY_CHOICES = ["box", "era", "avail", "faction", "weight", "kind", "tech", "role", "painted"];
 
 function loadPrefs() {
   try {
@@ -664,13 +664,21 @@ const FACTION_GROUP_ORDER = ["Inner Sphere", "IS Clan", "HW Clan", "Periphery", 
 const PAINT_ORDER = ["Unpainted", "Partly painted", "Fully painted"];
 const PRE_ERA = "Before the first era";
 const NO_GROUP = {
-  box: "No box", era: "Unknown year", faction: "Unaffiliated", weight: "Unknown", kind: "Unknown",
+  box: "No box", era: "Unknown year", avail: "No availability data", faction: "Unaffiliated", weight: "Unknown", kind: "Unknown",
   tech: "Unknown", role: "No role", painted: "Unpainted",
 };
 
 // An era is named by the year the unit debuted. Years before the first era get their own group.
+const eraLabel = (e) => `${e.name} (${e.from}–${e.to >= 9999 ? "on" : e.to})`;
 function eraNames() {
-  return state.meta.eras.map((e) => `${e.name} (${e.from}–${e.to >= 9999 ? "on" : e.to})`);
+  return state.meta.eras.map(eraLabel);
+}
+
+// Every era the unit is available in, from the faction availability data. This is the era filter's
+// meaning, where "era (debut)" above is only the one era the unit first appeared in.
+function availableEraNames(item) {
+  const byId = new Map(state.meta.eras.map((e) => [e.id, eraLabel(e)]));
+  return item.available_eras.map((id) => byId.get(id)).filter(Boolean);
 }
 
 function eraOf(item) {
@@ -690,6 +698,10 @@ function paintOf(item) {
 const GROUPERS = {
   box: { of: (i) => [i.box], order: null },
   era: { of: (i) => [eraOf(i)], order: () => [PRE_ERA, ...eraNames()] },
+  avail: {
+    of: (i) => { const names = availableEraNames(i); return names.length ? names : [null]; },
+    order: () => eraNames(),
+  },
   faction: { of: (i) => (i.faction_groups.length ? i.faction_groups : [null]), order: () => FACTION_GROUP_ORDER },
   weight: { of: (i) => [i.weight_class], order: () => WEIGHT_ORDER },
   kind: { of: (i) => [kindLabel(i)], order: () => state.meta.kinds.map((k) => k.label) },

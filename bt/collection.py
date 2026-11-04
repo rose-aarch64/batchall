@@ -73,11 +73,28 @@ def _attach_faction_groups(conn, items):
     return items
 
 
+def _attach_available_eras(conn, items):
+    """Give each row the ids of every era its unit is available in, earliest era first.
+
+    Any faction fielding the unit in an era counts. A unit with no MUL id, or that no faction fields,
+    gets an empty list.
+    """
+    years = {r["id"]: r["year_from"] for r in conn.execute("SELECT id, year_from FROM eras")}
+    by_mul = {}
+    for r in conn.execute("SELECT era_id, mul_ids FROM availability"):
+        for mul_id in json.loads(r["mul_ids"]):
+            by_mul.setdefault(mul_id, set()).add(r["era_id"])
+    for item in items:
+        eras = by_mul.get(item["mul_id"], ())
+        item["available_eras"] = sorted(eras, key=lambda e: (years.get(e, 0), e))
+    return items
+
+
 def get(conn, collection_id):
     row = conn.execute(COLLECTION_SELECT + " WHERE c.id = ?", (collection_id,)).fetchone()
     if row is None:
         raise CollectionError(f"no collection entry with id {collection_id}")
-    return _attach_faction_groups(conn, _attach_copies(conn, [_row(row)]))[0]
+    return _attach_available_eras(conn, _attach_faction_groups(conn, _attach_copies(conn, [_row(row)])))[0]
 
 
 def _like(term):
@@ -114,7 +131,9 @@ def list_collection(
     rows = conn.execute(
         COLLECTION_SELECT + where + " ORDER BY u.kind, u.chassis, u.model", params
     ).fetchall()
-    items = _attach_faction_groups(conn, _attach_copies(conn, [_row(r) for r in rows]))
+    items = _attach_available_eras(
+        conn, _attach_faction_groups(conn, _attach_copies(conn, [_row(r) for r in rows]))
+    )
 
     faction_row = availability.resolve_faction(conn, faction)
     era_row = availability.resolve_era(conn, era)

@@ -821,10 +821,9 @@ function renderCards(items) {
   if (!grouped) { container.replaceChildren(...items.flatMap(cardsFor)); return; }
   container.replaceChildren(...groupsOf(items).flatMap(([name, list]) => {
     const collapsed = state.collapsed.has(collapseKey(name));
-    return [
-      h("div", { class: "card-group-head" }, groupHeader(name, list, collapsed)),
-      collapsed ? null : h("div", { class: "card-grid" }, list.flatMap(cardsFor)),
-    ];
+    const head = h("div", { class: "card-group-head" }, groupHeader(name, list, collapsed));
+    // replaceChildren turns a null into the text "null", so a collapsed group adds only its header.
+    return collapsed ? [head] : [head, h("div", { class: "card-grid" }, list.flatMap(cardsFor))];
   }));
 }
 

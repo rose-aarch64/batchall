@@ -99,6 +99,7 @@ All commands print JSON. Add `--text` to `build` and `collection list` for reada
 python3 -m bt collection list --text
 python3 -m bt collection add --name "Atlas AS7-D" --qty 1 --painted 1
 python3 -m bt collection import --file mylist.txt
+python3 -m bt collection import --mul --file mul-ids.txt
 python3 -m bt build --target 5000 --formation star --mix "mech=3,vehicle=1,ba=1" --variants 3 --text
 python3 -m bt build --target 2000 --formation lance --faction "Draconis Combine" --era "Clan Invasion" --text
 python3 -m bt forces save --name "Scrappy Lance" --formation lance --target 2000 --units 12:1,15:2

@@ -168,7 +168,11 @@ def cmd_collection(args, conn):
         _emit({"removed": args.id})
     elif a == "import":
         text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
-        _emit(collection.import_text(conn, text, painted=bool(args.painted), box=args.box or ""))
+        _emit(
+            collection.import_text(
+                conn, text, painted=bool(args.painted), box=args.box or "", mode="mul" if args.mul else "name"
+            )
+        )
 
 
 def cmd_art(args, conn):
@@ -282,7 +286,7 @@ def cmd_serve(args, conn):
     from . import server
 
     conn.close()
-    server.serve(port=args.port, host=args.host)
+    server.serve(port=args.port, host=args.host, db_path=args.db)
 
 
 def make_parser():
@@ -316,6 +320,7 @@ def make_parser():
         help="box label: sets it on add, set and import; filters by substring on list",
     )
     col.add_argument("--file", default="-", help="import source, '-' for stdin")
+    col.add_argument("--mul", action="store_true", help="import: lines are MUL ids or unit links, not names")
     col.add_argument("--q", help="text filter (list)")
     col.add_argument("--kind", choices=KINDS)
     col.add_argument("--faction")

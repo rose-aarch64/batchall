@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BattleTech Collection</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>BattleTech Collection</h1>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="collection" role="tab">Collection</button>
+      <button class="tab" data-view="import" role="tab">Import</button>
+    </nav>
+    <span id="catalog-status" class="muted"></span>
+  </header>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <div class="layout">
+    <main>
+      <section id="view-collection">
+        <div class="toolbar">
+          <input id="filter-q" type="search" placeholder="Search name, chassis, model" aria-label="Search collection">
+          <input id="filter-box" type="search" data-suggest="box" autocomplete="off" placeholder="Box" aria-label="Filter by box" class="box-filter">
+          <select id="filter-kind" aria-label="Unit type"><option value="">All types</option></select>
+          <select id="filter-era" aria-label="Era"><option value="">Any era</option></select>
+          <select id="filter-faction" aria-label="Faction"><option value="">Any faction</option></select>
+          <label class="check"><input id="filter-painted" type="checkbox"> Painted only</label>
+          <button id="toggle-add" class="primary">Add units</button>
+        </div>
+
+        <div id="add-panel" class="panel" hidden>
+          <input id="add-q" type="search" data-suggest="unit" autocomplete="off" placeholder="Type a unit name, e.g. atlas as7" aria-label="Search the unit catalog">
+          <label class="field">Box (optional)
+            <input id="add-box" type="text" data-suggest="addbox" autocomplete="off" placeholder="Type a box name, e.g. clan inva">
+          </label>
+          <p class="muted small">Pick a unit above to add one copy, labeled with this box. Pick an official box here to add all the minis that come in it.</p>
+        </div>
+
+        <section id="review-panel" class="panel" hidden></section>
+
+        <div id="view-controls" class="view-controls" role="toolbar" aria-label="Collection view">
+          <div class="group" role="group" aria-label="View">
+            <span class="label">View</span>
+            <button type="button" class="seg" data-view="table" aria-pressed="true">Table</button>
+            <button type="button" class="seg" data-view="grouped" aria-pressed="false">Grouped by box</button>
+            <button type="button" class="seg" data-view="cards" aria-pressed="false">Cards</button>
+          </div>
+          <div id="density-group" class="group" role="group" aria-label="Row density">
+            <span class="label">Density</span>
+            <button type="button" class="seg" data-compact="0" aria-pressed="true">Comfortable</button>
+            <button type="button" class="seg" data-compact="1" aria-pressed="false">Compact</button>
+          </div>
+          <div id="group-actions" class="group" role="group" aria-label="Groups" hidden>
+            <button type="button" class="seg" id="collapse-all">Collapse all</button>
+            <button type="button" class="seg" id="expand-all">Expand all</button>
+          </div>
+          <label id="sort-group" class="group" hidden>
+            <span class="label">Sort</span>
+            <select id="card-sort">
+              <option value="">Default order</option>
+              <option value="name">Name (A to Z)</option>
+              <option value="kind">Type</option>
+              <option value="bv">BV (high to low)</option>
+              <option value="tons">Tons (heavy to light)</option>
+            </select>
+          </label>
+          <span id="view-count" class="count" aria-live="polite"></span>
+        </div>
+
+        <div class="table-wrap">
+          <table id="roster">
+            <thead>
+              <tr>
+                <th data-sort="name">Unit</th>
+                <th data-sort="kind">Type</th>
+                <th data-sort="box">Box</th>
+                <th data-sort="tons" class="num">Tons</th>
+                <th data-sort="bv" class="num">BV</th>
+                <th class="num">Qty</th>
+                <th class="num">Painted</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p id="roster-empty" class="muted empty" hidden></p>
+        </div>
+
+        <section id="tray" class="panel tray">
+          <h2>Force tray</h2>
+          <div class="tray-controls">
+            <label>Formation <select id="tray-formation"></select></label>
+            <label>Target BV <input id="tray-target" type="number" min="1" step="50" value="2000"></label>
+            <label>Mix <input id="tray-mix" type="text" placeholder="optional, e.g. mech=2,vehicle=1,ba=1"></label>
+            <button id="tray-build" class="primary">Build for me</button>
+            <button id="tray-clear">Clear</button>
+          </div>
+          <p class="muted small">Build uses the era, faction and painted filters above.</p>
+          <ul id="tray-list" class="tray-list"></ul>
+          <div id="tray-summary" class="tray-summary"></div>
+          <div class="tray-save">
+            <input id="tray-name" type="text" placeholder="Force name" aria-label="Force name">
+            <button id="tray-save" class="primary">Save force</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-import" hidden>
+        <div class="panel">
+          <h2>Import a list</h2>
+          <p class="muted">One unit per line. Quantities as <code>2x Locust LCT-1V</code> or <code>Locust LCT-1V x2</code>. Names are matched against the catalog; close matches are shown for you to fix, never guessed.</p>
+          <textarea id="import-text" rows="10" placeholder="Atlas AS7-D&#10;2x Locust LCT-1V&#10;Shadow Hawk SHD-2H"></textarea>
+          <label class="field">Box label for these units (optional)
+            <input id="import-box" type="text" data-suggest="box" autocomplete="off" placeholder="e.g. Clan Invasion Force Pack">
+          </label>
+          <div class="row">
+            <label class="check"><input id="import-painted" type="checkbox"> Mark all as painted</label>
+            <button id="import-go" class="primary">Import</button>
+          </div>
+          <div id="import-result"></div>
+        </div>
+      </section>
+    </main>
+
+    <aside id="forces" class="sidebar">
+      <h2>Saved forces</h2>
+      <ul id="forces-list" class="forces-list"></ul>
+      <p id="forces-empty" class="muted small">No saved forces yet.</p>
+    </aside>
+  </div>
+
+  <div id="suggest" class="suggest" role="listbox" aria-label="Suggestions" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

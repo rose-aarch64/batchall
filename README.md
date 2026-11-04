@@ -17,6 +17,41 @@ python3 -m bt serve              # web UI at http://localhost:8765/
 The database lives in `data/battletech.db`. Set `BT_DB` to use a different file, or `BT_DATA_DIR`
 to move the whole data folder.
 
+## Running the server
+
+```
+python3 -m bt serve                          # http://localhost:8765/
+python3 -m bt serve --port 9000              # different port
+python3 -m bt serve --host 0.0.0.0           # reachable from other machines (see warning)
+BT_DB=/path/to/other.db python3 -m bt serve  # use a different database
+```
+
+The server prints its address and runs until you press Ctrl+C. It uses only the standard library, so
+there is nothing to install. The default port is 8765 and the default host is `127.0.0.1`, which
+means only the machine running it can connect.
+
+Run `catalog import` once before the first start. Without it the UI loads but the catalog is empty
+and the UI shows "Catalog not loaded". The collection is kept when you re-import the catalog.
+
+The server has no login. Only use `--host 0.0.0.0` on a network you trust, since anyone who can reach
+the port can read and change the collection.
+
+The `serve` command ignores the global `--db` option. To point the server at another database, set
+`BT_DB` (or `BT_DATA_DIR`) as shown above.
+
+### Importing in the UI
+
+The Import tab accepts a pasted list or a file (`.txt`, `.csv`, `.tsv`) that fills the text box so you
+can review it first. Two list formats are supported:
+
+- **Unit names**, one per line: `Atlas AS7-D`, `2x Locust LCT-1V`, `Shadow Hawk SHD-2H x3`.
+- **MUL ids or links**, one per line: `1234`, `2x MUL 1234`, or a masterunitlist.info
+  `/Unit/Details/1234/...` link. A CSV row that starts with the id also works. About 1,500 catalog
+  units have no MUL id and can only be imported by name.
+
+Near matches, ids shared by several catalog entries, and lines with no match are listed for you to
+fix. Nothing is guessed.
+
 ## What it does
 
 - **Collection.** Unit, quantity owned, quantity painted, and an optional box label. Add from the

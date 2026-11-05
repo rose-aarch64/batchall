@@ -735,14 +735,27 @@ function buildCopyCard(item, copy) {
       h("div", { class: "card-actions" }, copyActions(item, copy, true))));
 }
 
-function rowsFor(item) {
-  const named = visibleCopies(item).map((c) => buildCopyRow(item, c));
-  return copyFilterActive() ? named : [buildRow(item), ...named];
+// Grouped by box, an entry sits in every box its minis are in: the entry's box for the unnamed stack,
+// and each named copy's own box. `box` is a group's box name ("" for no box), or null when not
+// grouping by box, which shows the whole entry.
+const copyBoxName = (item, copy) => copyBox(item, copy) || "";
+const stackBoxes = (item) => (item.copies.length && stackQty(item) <= 0 ? [] : [item.box || ""]);
+const boxesOf = (item) => [...new Set([...stackBoxes(item), ...item.copies.map((c) => copyBoxName(item, c))])];
+const inBox = (box, name) => box == null || name === box;
+const copiesIn = (item, box) => visibleCopies(item).filter((c) => inBox(box, copyBoxName(item, c)));
+// The unnamed stack's row sits in the entry's box. With every mini named it is kept (at zero) only where a copy shares that box.
+const stackIn = (item, box) => box == null || (item.box || "") === box;
+
+function rowsFor(item, box = null) {
+  const named = copiesIn(item, box).map((c) => buildCopyRow(item, c));
+  const stack = !copyFilterActive() && stackIn(item, box) && (box == null || boxesOf(item).includes(box));
+  return stack ? [buildRow(item), ...named] : named;
 }
 
-function cardsFor(item) {
-  const named = visibleCopies(item).map((c) => buildCopyCard(item, c));
-  return copyFilterActive() || stackQty(item) <= 0 ? named : [buildCard(item), ...named];
+function cardsFor(item, box = null) {
+  const named = copiesIn(item, box).map((c) => buildCopyCard(item, c));
+  const stack = !copyFilterActive() && stackQty(item) > 0 && stackIn(item, box);
+  return stack ? [buildCard(item), ...named] : named;
 }
 
 function buildRow(item) {
@@ -821,7 +834,7 @@ function paintOf(item) {
 }
 
 const GROUPERS = {
-  box: { of: (i) => [i.box], order: null },
+  box: { of: boxesOf, order: null },
   era: { of: (i) => [eraOf(i)], order: () => [PRE_ERA, ...eraNames()] },
   avail: {
     of: (i) => { const names = availableEraNames(i); return names.length ? names : [null]; },
@@ -866,16 +879,33 @@ function collapseKey(name) {
   return state.groupBy === "box" ? name : `${state.groupBy}:${name}`;
 }
 
-function totals(list) {
+// The box a group stands for when grouping by box ("" for the no-box group), else null.
+const groupBox = (name) => (state.groupBy === "box" ? (name === NO_GROUP.box ? "" : name) : null);
+
+// What an entry puts in a group. Grouped by box, that is only the minis in that box.
+function share(item, box) {
+  if (box == null) return { models: item.qty, painted: Math.min(item.painted, item.qty) };
+  const inStack = stackBoxes(item).includes(box) && (item.box || "") === box;
+  const copies = item.copies.filter((c) => copyBoxName(item, c) === box);
   return {
-    models: list.reduce((n, i) => n + i.qty, 0),
-    painted: list.reduce((n, i) => n + Math.min(i.painted, i.qty), 0),
-    bv: list.reduce((n, i) => n + i.bv * i.qty, 0),
+    models: (inStack ? stackQty(item) : 0) + copies.length,
+    painted: (inStack ? stackPainted(item) : 0) + copies.filter((c) => c.painted).length,
   };
 }
 
+function totals(list, box = null) {
+  const sums = { models: 0, painted: 0, bv: 0 };
+  for (const item of list) {
+    const s = share(item, box);
+    sums.models += s.models;
+    sums.painted += s.painted;
+    sums.bv += item.bv * s.models;
+  }
+  return sums;
+}
+
 function groupHeader(name, list, collapsed) {
-  const t = totals(list);
+  const t = totals(list, groupBox(name));
   const pct = t.models ? Math.round((100 * t.painted) / t.models) : 0;
   const toggle = () => {
     if (collapsed) state.collapsed.delete(collapseKey(name)); else state.collapsed.add(collapseKey(name));
@@ -959,10 +989,10 @@ function renderTable(items) {
     for (const [name, list] of groupsOf(items)) {
       const collapsed = state.collapsed.has(collapseKey(name));
       body.append(h("tr", { class: "group-row" }, h("td", { colspan: 8 }, groupHeader(name, list, collapsed))));
-      if (!collapsed) body.append(...list.flatMap(rowsFor));
+      if (!collapsed) body.append(...list.flatMap((item) => rowsFor(item, groupBox(name))));
     }
   } else {
-    body.append(...items.flatMap(rowsFor));
+    body.append(...items.flatMap((item) => rowsFor(item)));
   }
   const message = emptyMessage();
   $("roster-empty").hidden = !message;
@@ -977,12 +1007,12 @@ function renderCards(items) {
   container.classList.toggle("card-grid", !grouped);
   container.classList.toggle("card-groups", grouped);
   if (message) { container.replaceChildren(h("p", { class: "muted empty" }, message)); return; }
-  if (!grouped) { container.replaceChildren(...items.flatMap(cardsFor)); return; }
+  if (!grouped) { container.replaceChildren(...items.flatMap((item) => cardsFor(item))); return; }
   container.replaceChildren(...groupsOf(items).flatMap(([name, list]) => {
     const collapsed = state.collapsed.has(collapseKey(name));
     const head = h("div", { class: "card-group-head" }, groupHeader(name, list, collapsed));
     // replaceChildren turns a null into the text "null", so a collapsed group adds only its header.
-    return collapsed ? [head] : [head, h("div", { class: "card-grid" }, list.flatMap(cardsFor))];
+    return collapsed ? [head] : [head, h("div", { class: "card-grid" }, list.flatMap((item) => cardsFor(item, groupBox(name))))];
   }));
 }
 

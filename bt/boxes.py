@@ -116,6 +116,7 @@ class _ListParser(HTMLParser):
     """
 
     ITEM_TAGS = ("li", "dd")
+    NAME_TAGS = ("a", "i", "b", "em", "strong")
 
     def __init__(self):
         super().__init__()
@@ -124,6 +125,11 @@ class _ListParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag in self.ITEM_TAGS:
             self._stack.append({"text": [], "children": []})
+        elif tag in self.NAME_TAGS and self._stack:
+            # Some pages omit the space before a linked name ("BNC-12S<i><a>Banshee</a></i>").
+            text = self._stack[-1]["text"]
+            if text and text[-1][-1:].isalnum():
+                text.append(" ")
 
     def handle_endtag(self, tag):
         if tag in self.ITEM_TAGS and self._stack:

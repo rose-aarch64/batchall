@@ -124,6 +124,15 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(parsed["cards"][:3], ["LCT-1V Locust", "SHD-2H Shadow Hawk", "AS7-D Atlas"])
         self.assertIn("LCT-1E Locust", parsed["cards"])  # second sides are kept, after the first sides
 
+    def test_card_name_in_a_link_with_no_space_before_it(self):
+        html = (
+            '<span class="mw-headline" id="Contents">Contents</span></h2>'
+            "<ul><li>Four plastic miniatures<ul><li><i><a>Banshee</a></i></li></ul></li>"
+            "<li>Four Alpha Strike cards<ul>"
+            "<li>BNC-3S/BNC-12S<i><a>Banshee</a></i></li></ul></li></ul>"
+        )
+        self.assertIn("BNC-12S Banshee", boxes.parse_contents(html)["cards"])
+
     def test_second_sides_come_after_all_first_sides(self):
         cards = boxes.parse_contents(PACK_HTML)["cards"]
         self.assertLess(cards.index("AS7-D Atlas"), cards.index("LCT-1E Locust"))

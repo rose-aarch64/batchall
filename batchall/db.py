@@ -150,36 +150,6 @@ CREATE TABLE IF NOT EXISTS force_units (
 
 SCHEMA = SHARED_SCHEMA + USER_SCHEMA
 
-ACCOUNT_SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    handle TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    display_name TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-    visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'unlisted', 'public')),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS invites (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code_hash TEXT NOT NULL UNIQUE,
-    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    used_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    token_hash TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    last_seen TEXT NOT NULL,
-    expires_at TEXT NOT NULL
-);
-"""
-
 # Parents first, so rows can be copied or created in order without breaking a foreign key.
 USER_TABLES = (
     "collection", "copies", "mini_photos", "forces", "force_units", "company_logos", "company_colors",
@@ -265,14 +235,14 @@ def is_multiuser(path=None):
 
 
 def connect_shared(path=None):
-    """Open the shared database: the catalog, boxes and the account tables. WAL mode is turned on."""
+    """Open the shared database: the catalog and boxes. WAL mode is turned on."""
     path = str(path or config.DB_PATH)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(SHARED_SCHEMA + ACCOUNT_SCHEMA)
+    conn.executescript(SHARED_SCHEMA)
     _migrate_shared(conn)
     return conn
 

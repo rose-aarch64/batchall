@@ -15,6 +15,7 @@ DATA_DIR = Path(_setting("BATCHALL_DATA_DIR", "BT_DATA_DIR") or ROOT / "data")
 _db_setting = _setting("BATCHALL_DB", "BT_DB")
 DB_IS_DEFAULT = _db_setting is None  # a database chosen by a setting is never replaced by the old file
 DB_PATH = Path(_db_setting or DATA_DIR / "batchall.db")
+ACCOUNTS_DB_PATH = Path(os.environ.get("BATCHALL_ACCOUNTS_DB") or DATA_DIR / "accounts.db")  # hosted mode only
 LEGACY_DB_PATH = DATA_DIR / "battletech.db"  # the database file name from before the rename
 CATALOG_DIR = DATA_DIR / "catalog"
 BOX_PAGES_DIR = DATA_DIR / "box_pages"

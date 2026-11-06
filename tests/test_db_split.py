@@ -57,15 +57,13 @@ class DbSplitTests(unittest.TestCase):
         conn = self.open_user(1)
         names = {r["name"] for r in conn.execute("SELECT name FROM main.sqlite_master")}
         self.assertTrue({"collection", "copies", "forces"} <= names)
-        for shared_name in ("units", "users", "sessions"):
-            self.assertNotIn(shared_name, names)
+        self.assertNotIn("units", names)
         shared_names = {r["name"] for r in conn.execute("SELECT name FROM shared.sqlite_master")}
         self.assertIn("units", shared_names)
-        self.assertIn("users", shared_names)
 
     def test_shared_connection_has_no_user_tables(self):
         names = {r["name"] for r in self.shared.execute("SELECT name FROM sqlite_master")}
-        self.assertTrue({"units", "users", "invites", "sessions", "meta"} <= names)
+        self.assertTrue({"units", "meta"} <= names)
         for user_name in db.USER_TABLES:
             self.assertNotIn(user_name, names)
 

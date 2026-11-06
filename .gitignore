@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 data/
+.venv/
 .superpowers/
 HANDOFF.md
 TODO.md

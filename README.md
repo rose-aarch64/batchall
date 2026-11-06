@@ -36,8 +36,8 @@ and the UI shows "Catalog not loaded". The collection is kept when you re-import
 The server has no login. Only use `--host 0.0.0.0` on a network you trust, since anyone who can reach
 the port can read and change the collection.
 
-The `serve` command ignores the global `--db` option. To point the server at another database, set
-`BT_DB` (or `BT_DATA_DIR`) as shown above.
+The global `--db` option goes before the command and works with `serve`:
+`python3 -m bt --db /path/to/other.db serve`. Setting `BT_DB` (or `BT_DATA_DIR`) as shown above does the same.
 
 ### Importing in the UI
 
@@ -68,26 +68,31 @@ fix. Nothing is guessed.
 - **Views.** Switch between Table and Cards. The Grouping Off/On switch turns grouping on and off,
   and the dropdown beside it picks the field. Grouping splits either view into collapsible sections with
   counts, total BV and a painted progress bar. The fields are box, era (by debut year), era (every era the unit is available in, so a mini can appear under many), faction
-  group, weight class, type, tech base, role and paint status. Turning grouping off keeps your field,
+  group, weight class, type, tech base, role, paint status and material. Turning grouping off keeps your field,
   and picking a field turns grouping on. Faction groups use the factions that field a unit in the
   first era it appears, so later captures do not move a Clan mech into the Inner Sphere. Clan-tech
   units also join every Clan group that ever fields them. A mini can sit in several groups, since
   factions share units. Sort by name, type, BV, tons or debut year in either
   view. Compact density shrinks the table rows. Your choices are remembered.
-- **Named minis.** Open a unit's details and use Your copies to name individual minis. Each gets a
-  note, a faction and a company for the force it is painted for, and an optional tag. On a card a
-  named mini has a crimson strip with its company and faction, and the pencil opens its edit boxes.
-  The Copy tag, Mini faction and Mini company boxes filter by them. Mini faction is the force you
-  painted a mini for, which is separate from the Faction dropdown (who fields a unit in the game data).
-  A named mini can also be marked painted, kept in its own box (blank means its unit's box), and
-  switched to another variant on its own with its Variant button. The other minis of that unit stay
-  as they were. Box filters and box grouping still go by the unit's box.
+- **Every mini is its own item.** The roster shows one row or card per mini, so three Atlases are
+  three cards. Each mini can have a note, a faction and a company for the force it is painted for,
+  an optional tag, a material, a painted flag and a box of its own (blank means its unit's box). The
+  pencil opens the edit boxes, the brush marks it painted, "+ another" adds one more of that variant
+  and × removes that one mini. A mini with a note, faction or company gets a crimson strip on its card
+  with its company and faction. The Copy tag, Mini faction, Mini company and Material boxes filter by
+  them. Mini faction is the force you painted a mini for, which is separate from the Faction dropdown
+  (who fields a unit in the game data). Box filters and box grouping use each mini's own box.
+- **Materials.** A card with no material shows a "+ Material" button that opens a dropdown of No
+  Material, CGL Plastic, Resin and Metal. A mini with one shows it as a pill you can click to change
+  or clear. The pencil and the table's Material column take any other value you type. Group by
+  Material lists each material with only the minis made of it.
 - **Artwork.** Cards show each unit's illustration, downloaded once from MekBay and cached under
   `data/art/`. Units with no art show a placeholder. `python3 -m bt art prefetch` downloads the images
   for your whole collection ahead of time.
-- **Variants.** The Variant button on a row switches a mini to another variant of the same chassis,
-  since a plastic mini can stand for any variant. If you already own the target, the two merge. For a
-  mini that came from an official box, the variants on that box's cards (both sides) are listed first
+- **Variants.** The Variant button on a mini switches just that mini to another variant of the same
+  chassis, since a plastic mini can stand for any variant. It joins the entry for that variant, which
+  is created if you do not own it yet, and the other minis of the old variant stay put. For a mini
+  that came from an official box, the variants on that box's cards (both sides) are listed first
   under "On your box's card".
 - **Force builder.** Pick units you own to fit a BV ceiling for a lance (4), augmented lance (6),
   Star (5), Level II (6), Binary (10) or company (12), or any custom size. Optional filters: faction,

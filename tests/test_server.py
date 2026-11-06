@@ -102,17 +102,17 @@ class ServerTests(unittest.TestCase):
         status, boxes = self.request("GET", "/api/boxes")
         self.assertIn({"box": "Moved", "entries": 1}, boxes)
 
-    def test_copy_faction_and_company_over_api(self):
+    def test_mini_faction_and_company_over_api(self):
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
-        base = f"/api/collection/{entry['id']}/copies"
         status, copy = self.request(
-            "POST", base, {"note": "Gloss black", "faction": "Wolf's Dragoons", "company": "Black Widow Company"}
+            "PATCH", f"/api/copies/{entry['minis'][0]['id']}",
+            {"note": "Gloss black", "faction": "Wolf's Dragoons", "company": "Black Widow Company"},
         )
         self.assertEqual((status, copy["faction"], copy["company"]), (200, "Wolf's Dragoons", "Black Widow Company"))
 
         status, items = self.request("GET", "/api/collection?copy_faction=dragoons")
         self.assertEqual([i["name"] for i in items], ["Atlas AS7-D"])
-        self.assertEqual(items[0]["copies"][0]["company"], "Black Widow Company")
+        self.assertEqual([m["company"] for m in items[0]["minis"]], ["Black Widow Company", ""])
         status, items = self.request("GET", "/api/collection?copy_company=nothing")
         self.assertEqual(items, [])
         status, items = self.request("GET", "/api/collection?copy_faction=dragoons&copy_company=widow")
@@ -125,9 +125,19 @@ class ServerTests(unittest.TestCase):
 
         status, copy = self.request("PATCH", f"/api/copies/{copy['id']}", {"company": "Gamma Company"})
         self.assertEqual((status, copy["faction"], copy["company"]), (200, "Wolf's Dragoons", "Gamma Company"))
-        status, body = self.request("POST", f"/api/collection/{copy['collection_id']}/copies", {"note": "", "faction": ""})
-        self.assertEqual(status, 400)
-        self.assertIn("needs a note", body["error"])
+        status, copy = self.request("PATCH", f"/api/copies/{copy['id']}", {"note": "", "faction": "", "company": ""})
+        self.assertEqual((status, copy["note"], copy["faction"], copy["company"]), (200, "", "", ""))
+        status, listed = self.request("GET", "/api/copy-factions")
+        self.assertEqual(listed, [])
+
+    def test_the_named_copy_endpoints_are_gone(self):
+        status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
+        mini = entry["minis"][0]
+        self.assertNotIn("copies", entry)
+        self.assertEqual(self.request("GET", f"/api/collection/{entry['id']}/copies")[0], 404)
+        self.assertEqual(self.request("POST", f"/api/collection/{entry['id']}/copies", {"note": "x"})[0], 404)
+        self.assertEqual(self.request("DELETE", f"/api/copies/{mini['id']}")[0], 405)  # the path still takes PATCH
+        self.assertEqual(self.request("PATCH", f"/api/copies/{mini['id']}", {"note": "x"})[0], 200)
 
     def test_every_mini_has_material_and_can_be_edited_and_removed_over_api(self):
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 3})
@@ -135,7 +145,8 @@ class ServerTests(unittest.TestCase):
         first, second = entry["minis"][0], entry["minis"][1]
 
         status, mini = self.request("PATCH", f"/api/copies/{first['id']}", {"material": "Resin", "tag": "Trial"})
-        self.assertEqual((status, mini["material"], mini["named"]), (200, "Resin", False))
+        self.assertEqual((status, mini["material"], mini["tag"]), (200, "Resin", "Trial"))
+        self.assertNotIn("named", mini)
 
         status, items = self.request("GET", "/api/collection?material=resin")
         self.assertEqual([i["name"] for i in items], ["Atlas AS7-D"])
@@ -173,13 +184,15 @@ class ServerTests(unittest.TestCase):
 
         self.addCleanup(drop_variant)
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2, "painted": 1})
+        unpainted = next(m for m in entry["minis"] if not m["painted"])
         status, copy = self.request(
-            "POST", f"/api/collection/{entry['id']}/copies", {"note": "gloss", "painted": True, "box": "Shelf"}
+            "PATCH", f"/api/copies/{unpainted['id']}", {"note": "gloss", "painted": True, "box": "Shelf"}
         )
         self.assertEqual((status, copy["painted"], copy["box"]), (200, True, "Shelf"))
         status, items = self.request("GET", "/api/collection")
         self.assertEqual(items[0]["painted"], 2)
-        self.assertEqual((items[0]["copies"][0]["painted"], items[0]["copies"][0]["box"]), (True, "Shelf"))
+        edited = next(m for m in items[0]["minis"] if m["id"] == copy["id"])
+        self.assertEqual((edited["painted"], edited["box"]), (True, "Shelf"))
 
         status, copy = self.request("PATCH", f"/api/copies/{copy['id']}", {"painted": False, "box": ""})
         self.assertEqual((status, copy["painted"], copy["box"]), (200, False, ""))
@@ -191,33 +204,30 @@ class ServerTests(unittest.TestCase):
         status, items = self.request("GET", "/api/collection")
         by_name = {i["name"]: i for i in items}
         self.assertEqual(by_name["Atlas AS7-D"]["qty"], 1)
-        self.assertEqual([c["id"] for c in by_name["Atlas AS7-K"]["copies"]], [copy["id"]])
+        self.assertEqual([m["id"] for m in by_name["Atlas AS7-K"]["minis"]], [copy["id"]])
 
-    def test_copies_over_api(self):
+    def test_mini_note_and_tag_over_api(self):
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
-        base = f"/api/collection/{entry['id']}/copies"
-        status, copy = self.request("POST", base, {"note": "Black Widow Company", "tag": "Black Widow Co"})
+        first, second = entry["minis"]
+        status, copy = self.request(
+            "PATCH", f"/api/copies/{first['id']}", {"note": "Black Widow Company", "tag": "Black Widow Co"}
+        )
         self.assertEqual((status, copy["note"], copy["tag"]), (200, "Black Widow Company", "Black Widow Co"))
 
-        status, listed = self.request("GET", base)
-        self.assertEqual([c["id"] for c in listed], [copy["id"]])
         status, items = self.request("GET", "/api/collection?tag=widow")
-        self.assertEqual([(i["name"], i["copy_count"]) for i in items], [("Atlas AS7-D", 1)])
+        self.assertEqual([i["name"] for i in items], ["Atlas AS7-D"])
         status, tags = self.request("GET", "/api/copy-tags")
         self.assertEqual(tags, [{"tag": "Black Widow Co", "copies": 1}])
 
-        status, copy = self.request("PATCH", f"/api/copies/{copy['id']}", {"note": "Repainted"})
+        status, copy = self.request("PATCH", f"/api/copies/{first['id']}", {"note": "Repainted"})
         self.assertEqual((status, copy["note"]), (200, "Repainted"))
 
-        self.request("POST", base, {"note": "second"})
-        status, body = self.request("POST", base, {"note": "third"})
-        self.assertEqual(status, 400)
-        self.assertIn("already named", body["error"])
+        status, copy = self.request("PATCH", f"/api/copies/{second['id']}", {"note": "second"})
+        status, items = self.request("GET", "/api/collection")
+        self.assertEqual([m["note"] for m in items[0]["minis"]], ["Repainted", "second"])
 
-        status, _ = self.request("DELETE", f"/api/copies/{copy['id']}")
-        self.assertEqual(status, 200)
-        status, listed = self.request("GET", base)
-        self.assertEqual([c["note"] for c in listed], ["second"])
+        status, body = self.request("PATCH", "/api/copies/99999", {"note": "ghost"})
+        self.assertEqual(status, 400)
 
     def test_box_catalog_and_variant_endpoints(self):
         conn = db.connect(self.db_path)

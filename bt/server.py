@@ -102,18 +102,6 @@ def get_boxes(conn, query, body):
     return collection.list_boxes(conn)
 
 
-def get_copies(conn, query, body, entry_id):
-    return copies.list_for(conn, int(entry_id))
-
-
-def post_copy(conn, query, body, entry_id):
-    return copies.add(
-        conn, int(entry_id), body.get("note"), tag=body.get("tag", ""),
-        faction=body.get("faction", ""), company=body.get("company", ""),
-        painted=bool(body.get("painted")), box=body.get("box", ""), material=body.get("material", ""),
-    )
-
-
 def patch_copy(conn, query, body, copy_id):
     return copies.update(
         conn, int(copy_id), note=body.get("note"), tag=body.get("tag"),
@@ -131,11 +119,6 @@ def post_copy_swap(conn, query, body, copy_id):
     if not body.get("unit_uuid"):
         raise ApiError("unit_uuid is required")
     return copies.swap(conn, int(copy_id), body["unit_uuid"])
-
-
-def delete_copy(conn, query, body, copy_id):
-    copies.remove(conn, int(copy_id))
-    return {"removed": int(copy_id)}
 
 
 def get_copy_tags(conn, query, body):
@@ -307,11 +290,8 @@ ROUTES = [
     ("GET", r"/api/units/([^/]+)", get_unit_detail),
     ("GET", r"/api/collection/(\d+)/variants", get_variants),
     ("POST", r"/api/collection/(\d+)/swap", post_swap),
-    ("GET", r"/api/collection/(\d+)/copies", get_copies),
-    ("POST", r"/api/collection/(\d+)/copies", post_copy),
     ("PATCH", r"/api/copies/(\d+)", patch_copy),
     ("POST", r"/api/copies/(\d+)/swap", post_copy_swap),
-    ("DELETE", r"/api/copies/(\d+)", delete_copy),
     ("GET", r"/api/copy-tags", get_copy_tags),
     ("GET", r"/api/copy-factions", get_copy_factions),
     ("GET", r"/api/copy-companies", get_copy_companies),

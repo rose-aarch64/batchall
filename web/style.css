@@ -368,11 +368,7 @@ table.weapons th, table.weapons td { padding: 6px 8px; }
 table.weapons th:first-child, table.weapons td:first-child { padding-left: 0; }
 .detail .credit { margin-top: 14px; }
 
-/* Named copies */
-/* In the detail panel each named copy is one wrapping row of boxes, so it fits any width. */
-.copy-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); }
-.copy-row input { flex: 1 1 150px; min-width: 0; }
-.copy-row input.copy-note:first-child { flex: 2 1 240px; }
+/* Minis with a note, faction or company */
 tr.copy-line td:first-child { padding-left: 22px; border-left: 2px solid var(--accent); }
 tr.all-named { opacity: 0.6; }
 /* A named mini on its card: a crimson strip under the photo, then the note and tag. */
@@ -389,9 +385,8 @@ button.material-pill { display: inline-block; padding: 1px 8px; font: inherit; f
 .copy-editor { display: grid; gap: 6px; margin: 6px 0; }
 .copy-editor .fld { display: grid; gap: 2px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .copy-editor input { width: 100%; font-size: 13px; text-transform: none; letter-spacing: 0; }
-.copy-editor .remove-name { justify-self: start; white-space: nowrap; margin-top: 2px; }
 .fld.inline { display: flex; align-items: center; gap: 6px; }
-.copy-editor .fld.inline input, .copy-row .fld.inline input { width: auto; flex: 0 0 auto; }
+.copy-editor .fld.inline input { width: auto; flex: 0 0 auto; }
 tr.copy-line .copy-editor { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 @media (max-width: 520px) { .detail-top { grid-template-columns: minmax(0, 1fr); } .detail .photo { max-width: 220px; } .modal.detail { padding: 16px; } }
 @keyframes fade-in { from { opacity: 0; } }

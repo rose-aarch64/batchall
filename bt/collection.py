@@ -7,16 +7,14 @@ import re
 from . import availability
 from .catalog import unit_dict
 
-# Every owned mini is a copies row. A row is a named copy when it carries a note, faction or company.
-NAMED = "(note != '' OR faction != '' OR company != '')"
-# A row carries details when it has any text of its own. Quantity changes never drop such a mini.
+# Every owned mini is a copies row. A row carries details when it has any text of its own.
+# Quantity changes never drop such a mini.
 DETAILED = "(note != '' OR tag != '' OR faction != '' OR company != '' OR material != '' OR box != '')"
 
-COLLECTION_SELECT = f"""
+COLLECTION_SELECT = """
 SELECT c.id AS id, c.unit_uuid, c.qty, c.painted, c.notes, c.box,
        u.chassis, u.model, u.kind, u.type, u.subtype, u.tons, u.weight_class, u.bv, u.pv,
-       u.year, u.tech_base, u.role, u.squad_size, u.walk, u.jump, u.mul_id, u.uuid, u.art,
-       (SELECT COUNT(*) FROM copies WHERE collection_id = c.id AND {NAMED}) AS copy_count
+       u.year, u.tech_base, u.role, u.squad_size, u.walk, u.jump, u.mul_id, u.uuid, u.art
 FROM collection c JOIN units u ON u.uuid = c.unit_uuid
 """
 
@@ -31,12 +29,8 @@ def _row(row):
     return d
 
 
-def _attach_copies(conn, items):
-    """Give each row its minis, oldest first, and the named copies among them.
-
-    ``minis`` lists every owned mini with its own fields. ``copies`` is the subset that carries a
-    note, faction or company.
-    """
+def _attach_minis(conn, items):
+    """Give each row its minis, oldest first, each with its own fields."""
     by_entry = {}
     for c in conn.execute(
         "SELECT id, collection_id, note, tag, faction, company, material, painted, box FROM copies ORDER BY id"
@@ -44,11 +38,9 @@ def _attach_copies(conn, items):
         by_entry.setdefault(c["collection_id"], []).append({
             "id": c["id"], "note": c["note"], "tag": c["tag"], "faction": c["faction"],
             "company": c["company"], "material": c["material"], "painted": bool(c["painted"]), "box": c["box"],
-            "named": bool(c["note"] or c["faction"] or c["company"]),
         })
     for item in items:
         item["minis"] = by_entry.get(item["id"], [])
-        item["copies"] = [m for m in item["minis"] if m["named"]]
     return items
 
 
@@ -108,7 +100,7 @@ def get(conn, collection_id):
     row = conn.execute(COLLECTION_SELECT + " WHERE c.id = ?", (collection_id,)).fetchone()
     if row is None:
         raise CollectionError(f"no collection entry with id {collection_id}")
-    return _attach_available_eras(conn, _attach_faction_groups(conn, _attach_copies(conn, [_row(row)])))[0]
+    return _attach_available_eras(conn, _attach_faction_groups(conn, _attach_minis(conn, [_row(row)])))[0]
 
 
 def _like(term):
@@ -160,7 +152,7 @@ def list_collection(
         COLLECTION_SELECT + where + " ORDER BY u.kind, u.chassis, u.model", params
     ).fetchall()
     items = _attach_available_eras(
-        conn, _attach_faction_groups(conn, _attach_copies(conn, [_row(r) for r in rows]))
+        conn, _attach_faction_groups(conn, _attach_minis(conn, [_row(r) for r in rows]))
     )
 
     faction_row = availability.resolve_faction(conn, faction)

@@ -1,9 +1,9 @@
 """Minis: every owned mini is a row of its own, with a paint note, tag, faction, company and material.
 
-The collection entry's ``qty`` and ``painted`` always match its rows. A mini is a named copy when it
-has a note, faction or company. Faction and company say which force the mini is painted for ("Wolf's
-Dragoons", "Black Widow Company"). They are separate from the faction a unit is fielded by in the
-MekBay data. Material says what the mini is made of ("Metal", "Resin", "CGL plastic").
+The collection entry's ``qty`` and ``painted`` always match its rows. Faction and company say which
+force the mini is painted for ("Wolf's Dragoons", "Black Widow Company"). They are separate from the
+faction a unit is fielded by in the MekBay data. Material says what the mini is made of ("CGL Plastic",
+"Resin", "Metal").
 
 A mini can be marked painted, sit in a box of its own, and be switched to another variant.
 """
@@ -29,7 +29,6 @@ def _dict(row):
         "material": row["material"],
         "painted": bool(row["painted"]),
         "box": row["box"],
-        "named": bool(row["note"] or row["faction"] or row["company"]),
         "created_at": row["created_at"],
     }
 
@@ -41,22 +40,8 @@ def get(conn, copy_id):
     return _dict(row)
 
 
-def list_for(conn, collection_id):
-    """The entry's named copies. Its plain minis are rows too, but they are not listed."""
-    rows = conn.execute(
-        f"SELECT * FROM copies WHERE collection_id = ? AND {collection.NAMED} ORDER BY id", (collection_id,)
-    )
-    return [_dict(r) for r in rows]
-
-
-def count_for(conn, collection_id):
-    return conn.execute(
-        f"SELECT COUNT(*) FROM copies WHERE collection_id = ? AND {collection.NAMED}", (collection_id,)
-    ).fetchone()[0]
-
-
 def list_tags(conn):
-    """Distinct non-empty copy tags with the number of copies under each."""
+    """Distinct non-empty mini tags with the number of minis under each."""
     rows = conn.execute(
         "SELECT tag, COUNT(*) AS copies FROM copies WHERE tag != '' GROUP BY tag ORDER BY tag"
     )
@@ -64,7 +49,7 @@ def list_tags(conn):
 
 
 def list_values(conn, field):
-    """Distinct non-empty values of ``faction`` or ``company`` with the number of copies under each."""
+    """Distinct non-empty values of ``faction``, ``company`` or ``material`` with the number of minis under each."""
     if field not in VALUE_FIELDS:
         raise CopyError(f"cannot list values of {field!r}")
     rows = conn.execute(
@@ -74,44 +59,8 @@ def list_values(conn, field):
     return [{"value": r["value"], "copies": r["copies"]} for r in rows]
 
 
-def _require_a_label(note, faction, company):
-    if not (note or faction or company):
-        raise CopyError("a copy needs a note, a faction or a company")
-
-
-def add(conn, collection_id, note, tag="", faction="", company="", painted=False, box="", material=""):
-    """Name one of the entry's unnamed minis and set its paint state. Paint on the other plain minis is kept."""
-    entry = conn.execute("SELECT qty FROM collection WHERE id = ?", (collection_id,)).fetchone()
-    if entry is None:
-        raise CopyError(f"no collection entry with id {collection_id}")
-    note, tag = (note or "").strip(), (tag or "").strip()
-    faction, company = (faction or "").strip(), (company or "").strip()
-    box, material = (box or "").strip(), (material or "").strip()
-    _require_a_label(note, faction, company)
-    unnamed = conn.execute(
-        f"SELECT * FROM copies WHERE collection_id = ? AND NOT {collection.NAMED} ORDER BY id",
-        (collection_id,),
-    ).fetchall()
-    if not unnamed:
-        raise CopyError(f"all {entry['qty']} owned are already named")
-    wanted = 1 if painted else 0
-    # Take a mini with no details first, then an unpainted one, so paint and details already on the
-    # other minis stay where they are.
-    detailed = lambda r: bool(r["tag"] or r["material"] or r["box"])  # noqa: E731
-    row = min(unnamed, key=lambda r: (detailed(r), bool(r["painted"]), r["id"]))
-    with conn:
-        conn.execute(
-            "UPDATE copies SET note = ?, tag = ?, faction = ?, company = ?, material = ?, painted = ?, box = ? "
-            "WHERE id = ?",
-            (note, tag or row["tag"], faction, company, material or row["material"], wanted,
-             box or row["box"], row["id"]),
-        )
-        collection.recount(conn, collection_id)
-    return get(conn, row["id"])
-
-
 def update(conn, copy_id, note=None, tag=None, faction=None, company=None, painted=None, box=None, material=None):
-    """Change the fields that are given and keep the rest. Any mini can be edited, named or not."""
+    """Change the fields that are given and keep the rest."""
     current = get(conn, copy_id)
     given = {
         name: value.strip()
@@ -134,16 +83,6 @@ def update(conn, copy_id, note=None, tag=None, faction=None, company=None, paint
             if "painted" in given:
                 collection.recount(conn, current["collection_id"])
     return get(conn, copy_id)
-
-
-def remove(conn, copy_id):
-    """Drop a copy's name. The mini stays in the collection as a plain mini, painted if it was."""
-    get(conn, copy_id)
-    with conn:
-        conn.execute(
-            "UPDATE copies SET note = '', tag = '', faction = '', company = '', box = '' WHERE id = ?",
-            (copy_id,),
-        )
 
 
 def delete_mini(conn, copy_id):

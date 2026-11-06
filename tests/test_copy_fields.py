@@ -3,7 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from support import make_db, own
+from support import make_db, name_mini, own
 
 from bt import collection, copies, db
 
@@ -15,26 +15,25 @@ class CopyFieldTests(unittest.TestCase):
         self.id = self.entry["id"]
 
     def test_faction_and_company_are_stored_and_returned(self):
-        copy = copies.add(self.conn, self.id, "Gloss black", faction="Wolf's Dragoons", company="Black Widow Company")
+        copy = name_mini(self.conn, self.id, "Gloss black", faction="Wolf's Dragoons", company="Black Widow Company")
         self.assertEqual((copy["faction"], copy["company"]), ("Wolf's Dragoons", "Black Widow Company"))
-        self.assertEqual(copies.list_for(self.conn, self.id)[0]["company"], "Black Widow Company")
+        stored = [m for m in collection.get(self.conn, self.id)["minis"] if m["company"]]
+        self.assertEqual([m["company"] for m in stored], ["Black Widow Company"])
 
     def test_new_fields_default_to_empty(self):
-        copy = copies.add(self.conn, self.id, "Plain black")
+        copy = name_mini(self.conn, self.id, "Plain black")
         self.assertEqual((copy["faction"], copy["company"]), ("", ""))
 
     def test_values_are_trimmed(self):
-        copy = copies.add(self.conn, self.id, "x", faction="  Kell Hounds ", company=" Delta Lance  ")
+        copy = name_mini(self.conn, self.id, "x", faction="  Kell Hounds ", company=" Delta Lance  ")
         self.assertEqual((copy["faction"], copy["company"]), ("Kell Hounds", "Delta Lance"))
 
-    def test_a_copy_needs_a_note_a_faction_or_a_company(self):
-        with self.assertRaises(copies.CopyError):
-            copies.add(self.conn, self.id, "  ", faction=" ", company="")
-        self.assertEqual(copies.add(self.conn, self.id, "", faction="Kell Hounds")["note"], "")
-        self.assertEqual(copies.add(self.conn, self.id, "", company="Delta Lance")["company"], "Delta Lance")
+    def test_a_mini_can_have_a_faction_or_a_company_and_no_note(self):
+        self.assertEqual(name_mini(self.conn, self.id, "", faction="Kell Hounds")["note"], "")
+        self.assertEqual(name_mini(self.conn, self.id, "", company="Delta Lance")["company"], "Delta Lance")
 
     def test_update_changes_one_field_and_keeps_the_rest(self):
-        copy = copies.add(self.conn, self.id, "note", tag="t", faction="Kell Hounds", company="Delta Lance")
+        copy = name_mini(self.conn, self.id, "note", tag="t", faction="Kell Hounds", company="Delta Lance")
         copy = copies.update(self.conn, copy["id"], company="Gamma Lance")
         self.assertEqual(
             (copy["note"], copy["tag"], copy["faction"], copy["company"]),
@@ -46,7 +45,7 @@ class CopyFieldTests(unittest.TestCase):
         # its own field, or a slower save would put an older value back over a field saved just before.
         from unittest import mock
 
-        copy = copies.add(self.conn, self.id, "old note")
+        copy = name_mini(self.conn, self.id, "old note")
         stale = copies.get(self.conn, copy["id"])
         copies.update(self.conn, copy["id"], note="newer note")  # another save lands first
         real_get, calls = copies.get, []
@@ -61,21 +60,21 @@ class CopyFieldTests(unittest.TestCase):
         self.assertEqual((final["note"], final["faction"]), ("newer note", "Kell Hounds"))
 
     def test_update_can_clear_a_field_while_something_else_remains(self):
-        copy = copies.add(self.conn, self.id, "note", faction="Kell Hounds")
+        copy = name_mini(self.conn, self.id, "note", faction="Kell Hounds")
         copy = copies.update(self.conn, copy["id"], note="", faction="Kell Hounds")
         self.assertEqual((copy["note"], copy["faction"]), ("", "Kell Hounds"))
 
-    def test_blanking_note_faction_and_company_turns_it_back_into_a_plain_mini(self):
-        copy = copies.add(self.conn, self.id, "note", faction="Kell Hounds")
+    def test_blanking_every_field_leaves_a_plain_mini(self):
+        copy = name_mini(self.conn, self.id, "note", faction="Kell Hounds")
         copies.update(self.conn, copy["id"], note="", faction="")
-        self.assertFalse(copies.get(self.conn, copy["id"])["named"])
-        self.assertEqual(copies.list_for(self.conn, self.id), [])
+        again = copies.get(self.conn, copy["id"])
+        self.assertEqual((again["note"], again["faction"], again["company"]), ("", "", ""))
         self.assertEqual(collection.get(self.conn, self.id)["qty"], 3)
 
     def test_faction_and_company_values_list_distinct_with_counts(self):
-        copies.add(self.conn, self.id, "a", faction="Kell Hounds", company="Delta Lance")
-        copies.add(self.conn, self.id, "b", faction="Kell Hounds", company="Gamma Lance")
-        copies.add(self.conn, self.id, "c")
+        name_mini(self.conn, self.id, "a", faction="Kell Hounds", company="Delta Lance")
+        name_mini(self.conn, self.id, "b", faction="Kell Hounds", company="Gamma Lance")
+        name_mini(self.conn, self.id, "c")
         self.assertEqual(copies.list_values(self.conn, "faction"), [{"value": "Kell Hounds", "copies": 2}])
         self.assertEqual(
             copies.list_values(self.conn, "company"),
@@ -91,9 +90,9 @@ class CopyFilterTests(unittest.TestCase):
         atlas = own(self.conn, "u-atlas", qty=2)
         locust = own(self.conn, "u-locust", qty=1)
         own(self.conn, "u-condor", qty=1)
-        copies.add(self.conn, atlas["id"], "a", faction="Wolf's Dragoons", company="Black Widow Company")
-        copies.add(self.conn, atlas["id"], "b", faction="Kell Hounds", company="Delta Lance")
-        copies.add(self.conn, locust["id"], "c", faction="Wolf's Dragoons", company="Zeta Company")
+        name_mini(self.conn, atlas["id"], "a", faction="Wolf's Dragoons", company="Black Widow Company")
+        name_mini(self.conn, atlas["id"], "b", faction="Kell Hounds", company="Delta Lance")
+        name_mini(self.conn, locust["id"], "c", faction="Wolf's Dragoons", company="Zeta Company")
 
     def names(self, **kw):
         return sorted(i["name"] for i in collection.list_collection(self.conn, **kw))
@@ -150,14 +149,14 @@ class CopyMigrationTests(unittest.TestCase):
             old.close()
 
             conn = db.connect(path)
-            copy = copies.list_for(conn, 1)[0]
+            copy = collection.get(conn, 1)["minis"][0]
             self.assertEqual(copy["note"], "Wolf's Dragoons Black Widow Company")
             self.assertEqual((copy["faction"], copy["company"]), ("", ""))
             copies.update(conn, copy["id"], faction="Wolf's Dragoons")
             conn.close()
 
             conn = db.connect(path)  # a second open must not try to add the columns again
-            self.assertEqual(copies.list_for(conn, 1)[0]["faction"], "Wolf's Dragoons")
+            self.assertEqual(collection.get(conn, 1)["minis"][0]["faction"], "Wolf's Dragoons")
             conn.close()
 
 

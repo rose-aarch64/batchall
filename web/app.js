@@ -113,69 +113,7 @@ function weaponTable(weapons) {
       h("td", {}, w.name), h("td", {}, w.location || ""), h("td", {}, w.qty), h("td", {}, w.damage || ""), h("td", {}, w.range || "")))));
 }
 
-// Named copies of an owned mini: a paint note and an optional tag for each. Re-renders itself after a change.
-function copiesSection(entryId) {
-  const section = h("section", { class: "detail-section copies" });
-  const refresh = async () => {
-    await guarded(async () => {
-      const list = await api("GET", `/api/collection/${entryId}/copies`);
-      const owned = itemById(entryId)?.qty ?? list.length;
-      const change = (run) => async () => {
-        await guarded(run);
-        await loadCollection();
-        await refresh();
-      };
-      const input = (placeholder, label, extra) => h("input", { type: "text", placeholder, "aria-label": label, class: "copy-note", ...extra });
-      const note = input("Note, e.g. gloss black with red trim", "Note for a new copy");
-      const faction = input("Faction, e.g. Wolf's Dragoons", "Faction for a new copy", { list: "copy-faction-options" });
-      const company = input("Company, e.g. Black Widow Company", "Company for a new copy", { list: "copy-company-options" });
-      const tag = input("Tag (optional)", "Tag for a new copy", { list: "tag-options" });
-      const box = input("Box (optional, default is the entry's box)", "Box for a new copy", { "data-suggest": "box", "data-entry": entryId, autocomplete: "off" });
-      const painted = h("input", { type: "checkbox", "aria-label": "New copy is painted" });
-      const full = list.length >= owned;
-      const add = h("button", {
-        type: "button", class: "primary", disabled: full,
-        title: full ? "Every owned mini already has a name" : "Name another copy",
-        onclick: change(async () => {
-          await api("POST", `/api/collection/${entryId}/copies`, {
-            note: note.value, tag: tag.value, faction: faction.value, company: company.value,
-            box: box.value, painted: painted.checked,
-          });
-        }),
-      }, "Name a copy");
-      section.replaceChildren(
-        h("h3", {}, "Your copies"),
-        h("p", { class: "muted small" }, `${list.length} of ${owned} owned ${owned === 1 ? "has" : "have"} a name. Unnamed minis stay a plain count.`),
-        // Spread the rows: replaceChildren turns an array argument into the text "[object HTMLDivElement]".
-        ...list.map((c) => {
-          const edit = (name, placeholder, label, extra) => h("input", {
-            type: "text", value: c[name], class: "copy-note", placeholder, "aria-label": label, ...extra,
-            onchange: (e) => change(() => api("PATCH", `/api/copies/${c.id}`, { [name]: e.target.value }))(),
-          });
-          return h("div", { class: "copy-row" },
-            edit("note", "Note", "Note"),
-            edit("faction", "Faction", "Faction", { list: "copy-faction-options" }),
-            edit("company", "Company", "Company", { list: "copy-company-options" }),
-            edit("tag", "Tag", "Tag", { list: "tag-options" }),
-            edit("box", "Box", "Box", { "data-suggest": "box", "data-entry": entryId, autocomplete: "off" }),
-            h("label", { class: "fld inline" }, "Painted", h("input", {
-              type: "checkbox", checked: c.painted, "aria-label": "Painted",
-              onchange: (e) => change(() => api("PATCH", `/api/copies/${c.id}`, { painted: e.target.checked }))(),
-            })),
-            h("button", {
-              type: "button", class: "icon danger", title: "Remove this name", "aria-label": `Remove name: ${copyName(c)}`,
-              onclick: change(() => api("DELETE", `/api/copies/${c.id}`)),
-            }, "×"));
-        }),
-        h("div", { class: "copy-row" }, note, faction, company, tag, box,
-          h("label", { class: "fld inline" }, "Painted", painted), add));
-    });
-  };
-  refresh();
-  return section;
-}
-
-function buildDetail(unit, close, entryId = null) {
+function buildDetail(unit, close) {
   const s = unit.specs || {};
   const mv = s.movement || {};
   const heat = s.heat || {};
@@ -205,7 +143,6 @@ function buildDetail(unit, close, entryId = null) {
             stat("Tech", [s.level, s.tech_rating].filter(Boolean).join(" · ")),
             stat("Crew", s.crew), stat("Cost", s.cost != null ? `${s.cost.toLocaleString()} C-bills` : null))
         : h("p", { class: "muted" }, "No detail data yet. Run python3 -m bt catalog import once to load it.")),
-    entryId != null ? copiesSection(entryId) : null,
     h("div", { class: "detail-body" },
       h("div", {},
         unit.has_details ? detailSection("Weapons", weaponTable(s.weapons)) : null,
@@ -217,16 +154,16 @@ function buildDetail(unit, close, entryId = null) {
     h("p", { class: "muted small credit" }, "Unit data and text via MekBay and the MegaMek team."));
 }
 
-async function showUnitDetail(uuid, entryId = null) {
+async function showUnitDetail(uuid) {
   await guarded(async () => {
     const unit = await api("GET", `/api/units/${encodeURIComponent(uuid)}`);
-    const modal = openModal(buildDetail(unit, () => modal.close(), entryId));
+    const modal = openModal(buildDetail(unit, () => modal.close()));
     document.querySelector(".detail-close").focus();
   });
 }
 
 function nameLink(item) {
-  return h("button", { type: "button", class: "unit-link", title: "Show unit details", onclick: () => showUnitDetail(item.unit_uuid, item.id) }, item.name);
+  return h("button", { type: "button", class: "unit-link", title: "Show unit details", onclick: () => showUnitDetail(item.unit_uuid) }, item.name);
 }
 
 async function api(method, path, body) {
@@ -630,8 +567,11 @@ function visibleMinis(item) {
     m.company.toLowerCase().includes(f.company) && m.material.toLowerCase().includes(f.material));
 }
 
-// What a named mini is called on its card: the company, with the faction under it. A copy that has
-// neither (named before those fields existed) falls back to its note.
+// A mini with a note, faction or company gets a crimson strip on its card, naming what it is painted for.
+const isNamed = (mini) => Boolean(mini.note || mini.faction || mini.company);
+
+// What a named mini is called on its card: the company, with the faction under it. A mini that has
+// neither (it only has a note) falls back to its note.
 function copyHeading(copy) {
   if (copy.company || copy.faction) return { main: copy.company || copy.faction, sub: copy.company ? copy.faction : "" };
   return { main: copy.note, sub: "" };
@@ -645,19 +585,13 @@ async function changeCopy(run) {
   await loadCollection(); // also puts a field back when the change was refused
 }
 
-async function unnameCopy(copy) {
-  if (!(await confirmDialog(`Remove the name "${copyName(copy)}"? The mini stays in your collection.`, { confirmLabel: "Remove name", danger: true }))) return;
-  state.editingCopy = null; // the editor goes away with the name
-  await changeCopy(() => api("DELETE", `/api/copies/${copy.id}`));
-}
-
-// The boxes for editing one named mini. Each saves when you leave it. The page is not rebuilt until
+// The boxes for editing one mini. Each saves when you leave it. The page is not rebuilt until
 // Done, so tabbing from one box to the next keeps working.
 function copyEditor(item, copy) {
   const save = (name, read = (e) => e.target.value, restore = (e) => { e.target.value = copy[name]; }) => async (e) => {
     const value = read(e);
     const saved = await guarded(async () => Object.assign(copy, await api("PATCH", `/api/copies/${copy.id}`, { [name]: value })));
-    if (!saved) restore(e); // a refused change, like blanking the last label, puts the old text back
+    if (!saved) restore(e); // a refused change puts the old text back
   };
   const field = (label, name, extra) => h("label", { class: "fld" }, label,
     h("input", { type: "text", value: copy[name], "aria-label": label, onchange: save(name), ...extra }));
@@ -671,11 +605,7 @@ function copyEditor(item, copy) {
     h("label", { class: "fld inline" }, "Painted", h("input", {
       type: "checkbox", checked: copy.painted, "aria-label": "Painted",
       onchange: save("painted", (e) => e.target.checked, (e) => { e.target.checked = copy.painted; }),
-    })),
-    copy.named ? h("button", {
-      type: "button", class: "icon danger remove-name", title: "Remove this name", "aria-label": `Remove name: ${copyName(copy)}`,
-      onclick: () => unnameCopy(copy),
-    }, "Remove this name") : null);
+    })));
 }
 
 // Where a mini's box shows: its own, or the entry's when it has none.
@@ -767,8 +697,8 @@ function materialControl(mini) {
 
 function buildMiniRow(item, mini) {
   const editing = state.editingCopy === mini.id;
-  const detail = mini.named ? copyLine(mini) : "";
-  return h("tr", { class: mini.named ? "copy-line" : "mini-line" },
+  const detail = isNamed(mini) ? copyLine(mini) : "";
+  return h("tr", { class: isNamed(mini) ? "copy-line" : "mini-line" },
     h("td", {}, nameLink(item),
       editing ? copyEditor(item, mini)
         : (detail || mini.tag) ? h("div", { class: "copy-label", title: mini.note || null }, detail, detail && mini.tag ? " " : null, tagPill(mini)) : null),
@@ -797,10 +727,10 @@ function buildMiniRow(item, mini) {
 // the stats. The pencil swaps the details for the editing boxes.
 function buildMiniCard(item, mini) {
   const editing = state.editingCopy === mini.id;
-  const heading = mini.named ? copyHeading(mini) : null;
-  const noteLine = mini.named && (mini.company || mini.faction) && mini.note ? h("div", { class: "copy-note-line" }, mini.note) : null;
-  return h("article", { class: "mini-card" + (mini.named ? " is-copy" : "") },
-    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) },
+  const heading = isNamed(mini) ? copyHeading(mini) : null;
+  const noteLine = isNamed(mini) && (mini.company || mini.faction) && mini.note ? h("div", { class: "copy-note-line" }, mini.note) : null;
+  return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") },
+    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid) },
       artImage(item), mini.painted ? paintBadge() : null),
     heading ? h("div", { class: "copy-strip" }, h("span", {}, heading.main), heading.sub ? h("small", {}, heading.sub) : null) : null,
     h("div", { class: "card-body" },

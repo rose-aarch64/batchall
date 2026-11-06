@@ -5,7 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from support import make_db, own
+from support import make_db, name_mini, own
 
 from bt import collection, copies, db
 
@@ -25,36 +25,54 @@ class MiniFieldTests(unittest.TestCase):
         self.assertEqual(len(minis), 3)
         self.assertEqual(
             set(minis[0]),
-            {"id", "note", "tag", "faction", "company", "material", "painted", "box", "named"},
+            {"id", "note", "tag", "faction", "company", "material", "painted", "box"},
         )
         self.assertEqual([m["painted"] for m in minis], [True, False, False])
-        self.assertEqual([m["named"] for m in minis], [False, False, False])
         self.assertEqual(minis[0]["material"], "")
-
-    def test_named_copies_list_is_unchanged(self):
-        copies.add(self.conn, self.id, "lead")
-        item = collection.get(self.conn, self.id)
-        self.assertEqual(len(item["copies"]), 1)
-        self.assertEqual(len(item["minis"]), 3)
-        self.assertEqual([m["named"] for m in item["minis"]].count(True), 1)
 
     def test_a_plain_mini_can_get_a_material_tag_and_box(self):
         mini = minis_of(self.conn, self.id)[1]
         updated = copies.update(self.conn, mini["id"], material=" Resin ", tag="Trial", box="Shelf")
         self.assertEqual((updated["material"], updated["tag"], updated["box"]), ("Resin", "Trial", "Shelf"))
         again = minis_of(self.conn, self.id)[1]
-        self.assertEqual((again["material"], again["tag"], again["box"], again["named"]), ("Resin", "Trial", "Shelf", False))
-
-    def test_a_name_can_be_blanked_by_editing_it(self):
-        copy = copies.add(self.conn, self.id, "lead")
-        copies.update(self.conn, copy["id"], note="")
-        self.assertEqual(collection.get(self.conn, self.id)["copies"], [])
+        self.assertEqual((again["material"], again["tag"], again["box"]), ("Resin", "Trial", "Shelf"))
 
     def test_one_mini_painted_on_its_own(self):
         minis = minis_of(self.conn, self.id)
         copies.update(self.conn, minis[2]["id"], painted=True)
         self.assertEqual(collection.get(self.conn, self.id)["painted"], 2)
         self.assertEqual([m["painted"] for m in minis_of(self.conn, self.id)], [True, False, True])
+
+
+class OneKindOfMiniTests(unittest.TestCase):
+    """There is no separate named-copy system: every mini is the same kind of thing."""
+
+    def setUp(self):
+        self.conn = make_db()
+        self.entry = own(self.conn, "u-atlas", qty=2)
+        self.mini = copies.update(self.conn, minis_of(self.conn, self.entry["id"])[0]["id"], note="lead", faction="Kell Hounds")
+
+    def test_roster_rows_have_only_a_minis_list(self):
+        item = collection.get(self.conn, self.entry["id"])
+        self.assertNotIn("copies", item)
+        self.assertNotIn("copy_count", item)
+        self.assertEqual(len(item["minis"]), 2)
+
+    def test_minis_do_not_carry_a_named_flag(self):
+        self.assertNotIn("named", minis_of(self.conn, self.entry["id"])[0])
+        self.assertNotIn("named", self.mini)
+
+    def test_there_is_no_separate_way_to_name_or_unname_a_mini(self):
+        self.assertFalse(hasattr(copies, "add"))
+        self.assertFalse(hasattr(copies, "remove"))
+        self.assertFalse(hasattr(copies, "list_for"))
+        self.assertFalse(hasattr(copies, "count_for"))
+
+    def test_clearing_a_minis_fields_leaves_a_plain_mini(self):
+        copies.update(self.conn, self.mini["id"], note="", faction="")
+        again = minis_of(self.conn, self.entry["id"])[0]
+        self.assertEqual((again["note"], again["faction"], again["company"]), ("", "", ""))
+        self.assertEqual(collection.get(self.conn, self.entry["id"])["qty"], 2)
 
 
 class DeleteMiniTests(unittest.TestCase):
@@ -74,11 +92,12 @@ class DeleteMiniTests(unittest.TestCase):
         copies.delete_mini(self.conn, minis_of(self.conn, self.id)[0]["id"])
         self.assertEqual(collection.get(self.conn, self.id)["painted"], 0)
 
-    def test_deleting_a_named_mini_removes_its_name(self):
-        copy = copies.add(self.conn, self.id, "lead")
+    def test_deleting_a_mini_with_details_removes_it_and_its_details(self):
+        copy = name_mini(self.conn, self.id, "lead")
         copies.delete_mini(self.conn, copy["id"])
         entry = collection.get(self.conn, self.id)
-        self.assertEqual((entry["qty"], entry["copies"]), (2, []))
+        self.assertEqual(entry["qty"], 2)
+        self.assertNotIn("lead", [m["note"] for m in entry["minis"]])
 
     def test_deleting_the_last_mini_removes_the_entry(self):
         entry = own(self.conn, "u-locust", qty=1)

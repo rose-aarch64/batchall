@@ -49,3 +49,23 @@ def own(conn, uuid, qty=1, painted=0):
     from bt import collection
 
     return collection.add(conn, uuid, qty=qty, painted=painted)
+
+
+def name_mini(conn, entry_id, note="", tag="", faction="", company="", painted=False, box="", material=""):
+    """Give one of an entry's minis the details given and return it.
+
+    Picks a mini that has no details yet, an unpainted one first, so paint already on the other minis
+    stays where it is. Fails if every mini already has details.
+    """
+    from bt import collection, copies
+
+    def bare(m):
+        return not (m["note"] or m["tag"] or m["faction"] or m["company"] or m["material"] or m["box"])
+
+    free = [m for m in collection.get(conn, entry_id)["minis"] if bare(m)]
+    assert free, f"every mini of entry {entry_id} already has details"
+    mini = min(free, key=lambda m: (m["painted"], m["id"]))
+    return copies.update(
+        conn, mini["id"], note=note, tag=tag, faction=faction, company=company, painted=painted, box=box,
+        material=material,
+    )

@@ -3,6 +3,30 @@
 Batchall tracks the BattleTech miniatures you own and builds forces from them at a target Battle Value (BV).
 Python 3.12 standard library only. No packages to install.
 
+## Screenshots
+
+![Cards grouped by company](docs/screenshots/company-view.png)
+
+Grouping by company gives each company a banner in its own color, with its logo, mini count, total BV and
+paint progress. A mini can carry its own photo, which takes the place of the unit's artwork on its card.
+
+![The unit details panel](docs/screenshots/detail-panel.png)
+
+The details panel is a larger version of the card, with the unit's stats, weapons and lore. The lore sections
+start folded.
+
+<img src="docs/screenshots/photo-crop.png" alt="Choosing the crop of a mini photo" width="300">
+<img src="docs/screenshots/logo-and-color.png" alt="Choosing a company's logo and strip color" width="300">
+
+Left: a mini's photo is cropped by dragging and zooming, and the whole photo is kept so the crop can be changed
+later. Right: the logo and color dialog looks a company's logo up on Sarna, and offers strip colors, including
+colors taken from the faction logos.
+
+The photos are the author's own. The unit line art and the faction and company logos belong to their publishers
+and artists. The line art comes from MekBay, and the logos from MekBay and Sarna, the BattleTech wiki. They
+appear in these screenshots at small size for illustration only. If a rights holder would like any of them
+removed, open an issue and they will be taken out.
+
 ## Setup
 
 ```
@@ -196,7 +220,10 @@ Design notes are in `docs/box-catalog-design.md`.
 
 The code in this repository is MIT licensed (see `LICENSE`). That covers the code only. The MekBay
 data, unit artwork, lore text and BattleTechWiki pages the tool downloads belong to their owners, are
-not part of this repository, and are not covered by the MIT license.
+not part of this repository, and are not covered by the MIT license. The one exception to "not part of this
+repository" is the screenshots in `docs/screenshots/`, which show a small amount of that artwork and the
+logos (see Screenshots above). They are not covered by the MIT license either, apart from the author's own
+mini photos.
 
 ## Tests
 

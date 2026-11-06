@@ -340,6 +340,7 @@ def build_once(pool, target_bv, size, mix=None, slack_pct=3.0, seed=None, theme_
         entry = {
             "collection_id": cid,
             "qty": qty,
+            "unit_uuid": u.get("uuid") or u.get("unit_uuid"),
             "name": u["name"],
             "kind": u["kind"],
             "tons": u["tons"],
@@ -424,6 +425,7 @@ def _with_includes(result, found, target_bv, size, slack_pct):
             row = {
                 "collection_id": entry["id"],
                 "qty": 0,
+                "unit_uuid": entry["unit_uuid"],
                 "name": entry["name"],
                 "kind": entry["kind"],
                 "tons": entry["tons"],
@@ -448,6 +450,23 @@ def _with_includes(result, found, target_bv, size, slack_pct):
         composition=composition,
     )
     return result
+
+
+def _add_save_units(builds, owned_uuids):
+    """Give each build a ``save_units`` string for ``forces save --units``.
+
+    Each part is ``collection_id:qty``, with ``:unit_uuid`` added when a mini is fielded as a
+    variant other than the one owned, so a proxy build saves exactly as it was built.
+    """
+    for b in builds:
+        parts = []
+        for u in b["units"]:
+            part = f"{u['collection_id']}:{u['qty']}"
+            if u["unit_uuid"] != owned_uuids.get(u["collection_id"]):
+                part += f":{u['unit_uuid']}"
+            parts.append(part)
+        b["save_units"] = ",".join(parts)
+    return builds
 
 
 def build(
@@ -538,7 +557,10 @@ def build(
             "size": int(final_size),
             "mix": {k: list(v) for k, v in final_mix.items()},
             "pool": info,
-            "builds": [_with_includes(build_result, found, int(target_bv), int(final_size), slack_pct)],
+            "builds": _add_save_units(
+                [_with_includes(build_result, found, int(target_bv), int(final_size), slack_pct)],
+                {entry["id"]: entry["unit_uuid"] for entry, _ in found},
+            ),
         }
     if not pool:
         raise BuildError("no usable units in the collection for these filters")
@@ -576,6 +598,9 @@ def build(
 
     if found:  # restate each search result as a whole force: included units, full size, real target
         builds = [_with_includes(b, found, int(target_bv), int(final_size), slack_pct) for b in builds]
+    owned_uuids = {p.collection_id: p.unit["unit_uuid"] for p in pool}
+    owned_uuids.update({entry["id"]: entry["unit_uuid"] for entry, _ in found})
+    _add_save_units(builds, owned_uuids)
 
     return {
         "formation": fm.key if fm else None,

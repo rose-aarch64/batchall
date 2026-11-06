@@ -309,8 +309,9 @@ def cmd_forces(args, conn):
         for part in args.units.split(","):
             if not part.strip():
                 continue
-            cid, _, qty = part.partition(":")
-            units.append({"collection_id": int(cid), "qty": int(qty or 1)})
+            cid, _, rest = part.partition(":")
+            qty, _, variant = rest.partition(":")
+            units.append({"collection_id": int(cid), "qty": int(qty or 1), "unit_uuid": variant.strip()})
         faction = availability.resolve_faction(conn, args.faction)
         era = availability.resolve_era(conn, args.era)
         _emit(
@@ -435,7 +436,7 @@ def make_parser():
     f.add_argument("--name")
     f.add_argument("--formation", default="lance")
     f.add_argument("--target", type=int)
-    f.add_argument("--units", default="", help="collection_id:qty,collection_id:qty")
+    f.add_argument("--units", default="", help="collection_id:qty[:variant_uuid],... (a build's save_units)")
     f.add_argument("--faction")
     f.add_argument("--era")
     f.add_argument("--notes")

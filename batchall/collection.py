@@ -354,25 +354,26 @@ def swap(conn, collection_id, unit_uuid):
         conn.execute("UPDATE copies SET collection_id = ? WHERE collection_id = ?", (target["id"], collection_id))
         recount(conn, target["id"])
         for force in conn.execute(
-            "SELECT force_id, qty FROM force_units WHERE collection_id = ?", (collection_id,)
+            "SELECT force_id, as_uuid, qty FROM force_units WHERE collection_id = ?", (collection_id,)
         ).fetchall():
+            as_uuid = force["as_uuid"] if force["as_uuid"] != unit_uuid else ""  # the target's own variant
             existing = conn.execute(
-                "SELECT qty FROM force_units WHERE force_id = ? AND collection_id = ?",
-                (force["force_id"], target["id"]),
+                "SELECT qty FROM force_units WHERE force_id = ? AND collection_id = ? AND as_uuid = ?",
+                (force["force_id"], target["id"], as_uuid),
             ).fetchone()
+            conn.execute(
+                "DELETE FROM force_units WHERE force_id = ? AND collection_id = ? AND as_uuid = ?",
+                (force["force_id"], collection_id, force["as_uuid"]),
+            )
             if existing:
                 conn.execute(
-                    "UPDATE force_units SET qty = ? WHERE force_id = ? AND collection_id = ?",
-                    (existing["qty"] + force["qty"], force["force_id"], target["id"]),
-                )
-                conn.execute(
-                    "DELETE FROM force_units WHERE force_id = ? AND collection_id = ?",
-                    (force["force_id"], collection_id),
+                    "UPDATE force_units SET qty = ? WHERE force_id = ? AND collection_id = ? AND as_uuid = ?",
+                    (existing["qty"] + force["qty"], force["force_id"], target["id"], as_uuid),
                 )
             else:
                 conn.execute(
-                    "UPDATE force_units SET collection_id = ? WHERE force_id = ? AND collection_id = ?",
-                    (target["id"], force["force_id"], collection_id),
+                    "INSERT INTO force_units (force_id, collection_id, as_uuid, qty) VALUES (?,?,?,?)",
+                    (force["force_id"], target["id"], as_uuid, force["qty"]),
                 )
         conn.execute("DELETE FROM collection WHERE id = ?", (collection_id,))
     return get(conn, target["id"])

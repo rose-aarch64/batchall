@@ -140,8 +140,9 @@ CREATE INDEX IF NOT EXISTS idx_box_items_box ON box_items(box_id);
 CREATE TABLE IF NOT EXISTS force_units (
     force_id INTEGER NOT NULL REFERENCES forces(id) ON DELETE CASCADE,
     collection_id INTEGER NOT NULL REFERENCES collection(id) ON DELETE CASCADE,
+    as_uuid TEXT NOT NULL DEFAULT '',
     qty INTEGER NOT NULL DEFAULT 1 CHECK (qty > 0),
-    PRIMARY KEY (force_id, collection_id)
+    PRIMARY KEY (force_id, collection_id, as_uuid)
 );
 """
 
@@ -228,7 +229,34 @@ def _migrate(conn):
     if "img" not in columns:  # NULL until `catalog import` or the app's start-up fills it from factions.json
         with conn:
             conn.execute("ALTER TABLE factions ADD COLUMN img TEXT")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(force_units)")}
+    if "as_uuid" not in columns:  # empty means the force fields the mini as the variant owned
+        _add_force_unit_variants(conn)
     _add_plain_mini_rows(conn)
+
+
+def _add_force_unit_variants(conn):
+    """Rebuild force_units so one mini can appear in a force as more than one variant.
+
+    The key grows from (force, entry) to (force, entry, variant), which SQLite cannot do in place.
+    Every existing row is kept and keeps meaning "the variant owned" (an empty ``as_uuid``).
+    """
+    with conn:
+        conn.execute(
+            "CREATE TABLE force_units_new ("
+            "force_id INTEGER NOT NULL REFERENCES forces(id) ON DELETE CASCADE, "
+            "collection_id INTEGER NOT NULL REFERENCES collection(id) ON DELETE CASCADE, "
+            "as_uuid TEXT NOT NULL DEFAULT '', "
+            "qty INTEGER NOT NULL DEFAULT 1 CHECK (qty > 0), "
+            "PRIMARY KEY (force_id, collection_id, as_uuid))"
+        )
+        conn.execute(
+            "INSERT INTO force_units_new (force_id, collection_id, as_uuid, qty) "
+            "SELECT force_id, collection_id, '', qty FROM force_units "
+            "WHERE force_id IN (SELECT id FROM forces) AND collection_id IN (SELECT id FROM collection)"
+        )
+        conn.execute("DROP TABLE force_units")
+        conn.execute("ALTER TABLE force_units_new RENAME TO force_units")
 
 
 def _add_plain_mini_rows(conn):

@@ -335,7 +335,7 @@ def candidates(index, mini_name, card="", limit=12):
 def import_boxes(conn, fetcher=None, progress=None):
     """Rebuild the box catalog from the wiki. Collection rows are never touched."""
     if conn.execute("SELECT COUNT(*) FROM units").fetchone()[0] == 0:
-        raise BoxError("load the unit catalog first: python3 -m bt catalog import")
+        raise BoxError("load the unit catalog first: python3 -m batchall catalog import")
     fetcher = fetcher or Fetcher()
     say = progress or (lambda message: None)
     index = UnitIndex(conn)

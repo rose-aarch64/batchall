@@ -2,7 +2,7 @@ import unittest
 
 from support import make_db, name_mini, own
 
-from bt import collection, copies
+from batchall import collection, copies
 
 
 def minis_of(conn, entry_id):

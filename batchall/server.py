@@ -312,7 +312,7 @@ ROUTES = [(m, re.compile(f"^{p}$"), h) for m, p, h in ROUTES]
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "bt/0.1"
+    server_version = "batchall/0.1"
 
     def log_message(self, fmt, *args):  # keep the terminal quiet
         pass

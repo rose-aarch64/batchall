@@ -2,7 +2,7 @@ import unittest
 
 from support import make_db, own
 
-from bt import collection, forces
+from batchall import collection, forces
 
 
 class CollectionTests(unittest.TestCase):

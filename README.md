@@ -1,29 +1,35 @@
-# BattleTech Collection
+# Batchall
 
-Track the BattleTech miniatures you own and build forces from them at a target Battle Value (BV).
+Batchall tracks the BattleTech miniatures you own and builds forces from them at a target Battle Value (BV).
 Python 3.12 standard library only. No packages to install.
 
 ## Setup
 
 ```
-python3 -m bt catalog import     # downloads unit, faction and era data from MekBay (about 27 MB)
-python3 -m bt boxes import       # builds the official box and ForcePack catalog from BattleTechWiki
-python3 -m bt serve              # web UI at http://localhost:8765/
+python3 -m batchall catalog import     # downloads unit, faction and era data from MekBay (about 27 MB)
+python3 -m batchall boxes import       # builds the official box and ForcePack catalog from BattleTechWiki
+python3 -m batchall serve              # web UI at http://localhost:8765/
 ```
 
 `boxes import` needs the unit catalog first. It pauses between wiki requests and caches the pages in
 `data/box_pages/`, so running it again is fast. Use `--refresh-pages` to download them again.
 
-The database lives in `data/battletech.db`. Set `BT_DB` to use a different file, or `BT_DATA_DIR`
-to move the whole data folder.
+The database lives in `data/batchall.db`. Set `BATCHALL_DB` to use a different file, or
+`BATCHALL_DATA_DIR` to move the whole data folder.
+
+**Coming from the old name.** This project used to be called BattleTech Collection, with the command
+`python3 -m bt` and the database `data/battletech.db`. The first time Batchall opens the default
+database it copies `data/battletech.db` to `data/batchall.db`. The old file is only read, so it stays
+as a backup, and nothing is copied again once `data/batchall.db` exists. The old settings `BT_DB` and
+`BT_DATA_DIR` still work, and a database chosen by a setting or by `--db` is never replaced.
 
 ## Running the server
 
 ```
-python3 -m bt serve                          # http://localhost:8765/
-python3 -m bt serve --port 9000              # different port
-python3 -m bt serve --host 0.0.0.0           # reachable from other machines (see warning)
-BT_DB=/path/to/other.db python3 -m bt serve  # use a different database
+python3 -m batchall serve                          # http://localhost:8765/
+python3 -m batchall serve --port 9000              # different port
+python3 -m batchall serve --host 0.0.0.0           # reachable from other machines (see warning)
+BATCHALL_DB=/path/to/other.db python3 -m batchall serve  # use a different database
 ```
 
 The server prints its address and runs until you press Ctrl+C. It uses only the standard library, so
@@ -37,7 +43,7 @@ The server has no login. Only use `--host 0.0.0.0` on a network you trust, since
 the port can read and change the collection.
 
 The global `--db` option goes before the command and works with `serve`:
-`python3 -m bt --db /path/to/other.db serve`. Setting `BT_DB` (or `BT_DATA_DIR`) as shown above does the same.
+`python3 -m batchall --db /path/to/other.db serve`. Setting `BATCHALL_DB` (or `BATCHALL_DATA_DIR`) as shown above does the same.
 
 ### Importing in the UI
 
@@ -87,7 +93,7 @@ fix. Nothing is guessed.
   or clear. The pencil and the table's Material column take any other value you type. Group by
   Material lists each material with only the minis made of it.
 - **Artwork.** Cards show each unit's illustration, downloaded once from MekBay and cached under
-  `data/art/`. Units with no art show a placeholder. `python3 -m bt art prefetch` downloads the images
+  `data/art/`. Units with no art show a placeholder. `python3 -m batchall art prefetch` downloads the images
   for your whole collection ahead of time.
 - **Variants.** The Variant button on a mini switches just that mini to another variant of the same
   chassis, since a plastic mini can stand for any variant. It joins the entry for that variant, which
@@ -116,17 +122,17 @@ in the window, the best fit at or under the target is returned and flagged.
 All commands print JSON. Add `--text` to `build` and `collection list` for readable output.
 
 ```
-python3 -m bt collection list --text
-python3 -m bt collection add --name "Atlas AS7-D" --qty 1 --painted 1
-python3 -m bt collection import --file mylist.txt
-python3 -m bt collection import --mul --file mul-ids.txt
-python3 -m bt build --target 5000 --formation star --mix "mech=3,vehicle=1,ba=1" --variants 3 --text
-python3 -m bt build --target 2000 --formation lance --faction "Draconis Combine" --era "Clan Invasion" --text
-python3 -m bt forces save --name "Scrappy Lance" --formation lance --target 2000 --units 12:1,15:2
-python3 -m bt forces list
+python3 -m batchall collection list --text
+python3 -m batchall collection add --name "Atlas AS7-D" --qty 1 --painted 1
+python3 -m batchall collection import --file mylist.txt
+python3 -m batchall collection import --mul --file mul-ids.txt
+python3 -m batchall build --target 5000 --formation star --mix "mech=3,vehicle=1,ba=1" --variants 3 --text
+python3 -m batchall build --target 2000 --formation lance --faction "Draconis Combine" --era "Clan Invasion" --text
+python3 -m batchall forces save --name "Scrappy Lance" --formation lance --target 2000 --units 12:1,15:2
+python3 -m batchall forces list
 ```
 
-`python3 -m bt <command> --help` lists every option.
+`python3 -m batchall <command> --help` lists every option.
 
 ## Data
 
@@ -140,13 +146,13 @@ Level I units.
 
 Unit artwork also comes from MekBay's public host. It covers about 81% of units (nearly all mechs and
 vehicles) and belongs to its publishers. It is cached for your own use, kept out of git, and should not
-be redistributed. After upgrading from an older version, run `python3 -m bt catalog import` once so
+be redistributed. After upgrading from an older version, run `python3 -m batchall catalog import` once so
 units get their art paths.
 
 Box contents come from BattleTechWiki, a fan-maintained source, so they can be wrong or incomplete.
 Each box keeps a link to its page. The variant added for a mini is the first one printed on the box's
 Alpha Strike card. In testing, about 83% of minis matched exactly one MekBay unit on their own.
-Core boxed sets come from a short list in `bt/boxes.py`; ForcePacks come from the wiki's list.
+Core boxed sets come from a short list in `batchall/boxes.py`; ForcePacks come from the wiki's list.
 Design notes are in `docs/box-catalog-design.md`.
 
 ## Limits

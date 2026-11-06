@@ -2,7 +2,7 @@ import unittest
 
 from support import make_db, own
 
-from bt import collection
+from batchall import collection
 
 
 class FactionGroupTests(unittest.TestCase):

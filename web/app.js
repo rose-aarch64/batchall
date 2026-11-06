@@ -142,7 +142,7 @@ function buildDetail(unit, close) {
             stat("Heat", heat.generated != null ? `${heat.generated} generated, ${heat.dissipation ?? "?"} dissipated` : null),
             stat("Tech", [s.level, s.tech_rating].filter(Boolean).join(" · ")),
             stat("Crew", s.crew), stat("Cost", s.cost != null ? `${s.cost.toLocaleString()} C-bills` : null))
-        : h("p", { class: "muted" }, "No detail data yet. Run python3 -m bt catalog import once to load it.")),
+        : h("p", { class: "muted" }, "No detail data yet. Run python3 -m batchall catalog import once to load it.")),
     h("div", { class: "detail-body" },
       h("div", {},
         unit.has_details ? detailSection("Weapons", weaponTable(s.weapons)) : null,
@@ -490,7 +490,8 @@ function sortedItems() {
 // The view, the density and which groups are collapsed are remembered between visits.
 
 const VIEWS = ["table", "cards"];
-const PREFS_KEY = "bt.view";
+const PREFS_KEY = "batchall.view";
+const OLD_PREFS_KEY = "bt.view"; // the key before the rename, read once so saved view choices carry over
 const SORT_CHOICES = {
   "": null,
   name: { key: "name", dir: 1 },
@@ -503,7 +504,7 @@ const GROUP_BY_CHOICES = ["box", "era", "avail", "faction", "weight", "kind", "t
 
 function loadPrefs() {
   try {
-    const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+    const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || localStorage.getItem(OLD_PREFS_KEY) || "{}");
     if (VIEWS.includes(saved.view)) state.view = saved.view;
     if (GROUP_BY_CHOICES.includes(saved.groupBy)) state.groupBy = saved.groupBy;
     // Grouped used to be a view of its own. It is now the table with a grouping, by box as before.
@@ -1395,10 +1396,10 @@ function setupControls() {
   const c = meta.catalog;
   const unitsText = c.units
     ? `Catalog: ${c.units.toLocaleString()} units from MekBay`
-    : "Catalog not loaded. Run: python3 -m bt catalog import";
+    : "Catalog not loaded. Run: python3 -m batchall catalog import";
   const boxText = meta.box_catalog
     ? `${meta.box_catalog} official boxes`
-    : "No official boxes yet. Run: python3 -m bt boxes import";
+    : "No official boxes yet. Run: python3 -m batchall boxes import";
   $("catalog-status").textContent = `${unitsText} · ${boxText}`;
 
   let filterTimer = null;

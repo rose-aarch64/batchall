@@ -5,7 +5,7 @@ from pathlib import Path
 
 from support import make_db
 
-from bt import catalog, db, details
+from batchall import catalog, db, details
 
 MAD_CAT = {
     "name": "BMMadCat_Prime",

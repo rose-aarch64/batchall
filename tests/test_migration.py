@@ -5,7 +5,7 @@ import unittest
 
 from support import UNITS  # noqa: F401  (also puts the project root on sys.path)
 
-from bt import collection, db
+from batchall import collection, db
 
 
 class MigrationTests(unittest.TestCase):

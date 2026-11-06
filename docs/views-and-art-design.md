@@ -52,7 +52,7 @@ picture. This adds three views of the same filtered collection and a default pic
 ## Commands
 
 ```
-python3 -m bt art status      # how many images the collection needs and how many are cached
-python3 -m bt art prefetch    # download the missing ones ahead of time
-python3 -m bt catalog import  # re-run once after upgrading so units get their art paths
+python3 -m batchall art status      # how many images the collection needs and how many are cached
+python3 -m batchall art prefetch    # download the missing ones ahead of time
+python3 -m batchall catalog import  # re-run once after upgrading so units get their art paths
 ```

@@ -3,7 +3,7 @@ from unittest import mock
 
 from support import make_db
 
-from bt import boxes, collection, forces
+from batchall import boxes, collection, forces
 
 PACK_HTML = """
 <h2><span class="mw-headline" id="Description">Description</span></h2><p>ignored</p>
@@ -262,7 +262,7 @@ class ImportAndAddTests(unittest.TestCase):
         self.assertEqual(collection.list_collection(self.conn)[0]["qty"], 2)
 
     def test_needs_the_unit_catalog(self):
-        from bt import db
+        from batchall import db
 
         with self.assertRaises(boxes.BoxError):
             boxes.import_boxes(db.connect(":memory:"), FakeFetcher(self.pages))

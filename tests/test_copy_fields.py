@@ -5,7 +5,7 @@ import unittest
 
 from support import make_db, name_mini, own
 
-from bt import collection, copies, db
+from batchall import collection, copies, db
 
 
 class CopyFieldTests(unittest.TestCase):

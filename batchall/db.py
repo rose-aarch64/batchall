@@ -117,8 +117,45 @@ CREATE TABLE IF NOT EXISTS force_units (
 """
 
 
+def adopt_legacy_database(target, legacy):
+    """Copy the database file from before the rename to its new name, once. Returns True when it copied.
+
+    Does nothing when the new file already exists or there is no old one. The old file is only read, so
+    it stays as a backup. The copy uses SQLite's backup API, which gives a consistent snapshot, and goes
+    to a temporary file that is renamed into place, so an interrupted copy never leaves a half-written
+    database for a later start to trust.
+    """
+    target, legacy = Path(target), Path(legacy)
+    if target.exists() or not legacy.exists():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".copying")
+    partial.unlink(missing_ok=True)
+    source = sqlite3.connect(f"{legacy.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        copy = sqlite3.connect(partial)
+        try:
+            source.backup(copy)
+        finally:
+            copy.close()
+        partial.replace(target)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    finally:
+        source.close()
+    return True
+
+
 def connect(path=None):
-    """Open (and create if needed) the database."""
+    """Open (and create if needed) the database.
+
+    With no path, the default database is used. The first time that happens after the rename to
+    Batchall, the old ``battletech.db`` is copied to ``batchall.db``. A path given by the caller or by
+    a setting is used as it is.
+    """
+    if path is None and config.DB_IS_DEFAULT:
+        adopt_legacy_database(config.DB_PATH, config.LEGACY_DB_PATH)
     path = str(path or config.DB_PATH)
     if path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)

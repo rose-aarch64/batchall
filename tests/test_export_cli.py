@@ -8,7 +8,7 @@ from pathlib import Path
 
 from support import make_db
 
-from bt import db, forces
+from batchall import db, forces
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -23,16 +23,16 @@ class ExportCliTests(unittest.TestCase):
         with target:
             for row in source.execute("SELECT * FROM units").fetchall():
                 target.execute(f"INSERT INTO units VALUES ({','.join('?' for _ in row.keys())})", tuple(row))
-        from bt import collection
+        from batchall import collection
 
         entry = collection.add(target, "u-atlas", qty=1)
         self.force = forces.save(target, "CLI Lance", "lance", [{"collection_id": entry["id"], "qty": 1}])
         target.close()
 
     def run_cli(self, *args):
-        env = dict(os.environ, BT_DB=self.db_path, BT_DATA_DIR=self.tmp.name)
+        env = dict(os.environ, BATCHALL_DB=self.db_path, BATCHALL_DATA_DIR=self.tmp.name)
         return subprocess.run(
-            [sys.executable, "-m", "bt", *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30
+            [sys.executable, "-m", "batchall", *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30
         )
 
     def test_default_prints_the_mekbay_link(self):

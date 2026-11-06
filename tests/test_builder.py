@@ -3,7 +3,7 @@ import unittest
 
 from support import make_db, own
 
-from bt import builder, formations
+from batchall import builder, formations
 
 
 def brute_force_best(pool, size, target, mix=None):
@@ -130,7 +130,7 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(info["faction"]["name"], "Federated Suns")
 
     def test_box_filter_limits_pool_and_builds(self):
-        from bt import collection
+        from batchall import collection
 
         for name in ("u-atlas", "u-locust", "u-wolfhound", "u-shadow", "u-marauder"):
             collection.update(self.conn, self.ids[name], box="Mech Box")

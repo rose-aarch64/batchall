@@ -8,7 +8,7 @@ from pathlib import Path
 
 from support import make_db
 
-from bt import db
+from batchall import db
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,9 +26,9 @@ class CliImportTests(unittest.TestCase):
         target.close()
 
     def run_cli(self, *args, stdin=""):
-        env = dict(os.environ, BT_DB=self.db_path, BT_DATA_DIR=self.tmp.name)
+        env = dict(os.environ, BATCHALL_DB=self.db_path, BATCHALL_DATA_DIR=self.tmp.name)
         return subprocess.run(
-            [sys.executable, "-m", "bt", *args],
+            [sys.executable, "-m", "batchall", *args],
             cwd=ROOT,
             env=env,
             input=stdin,
@@ -55,10 +55,10 @@ class ServeDbTests(unittest.TestCase):
     def test_serve_passes_db_path_through(self):
         from unittest import mock
 
-        from bt import cli
+        from batchall import cli
 
         conn = mock.Mock()
-        with mock.patch("bt.server.serve") as serve:
+        with mock.patch("batchall.server.serve") as serve:
             args = cli.make_parser().parse_args(["--db", "/tmp/x.db", "serve", "--port", "0"])
             cli.cmd_serve(args, conn)
         self.assertEqual(serve.call_args.kwargs["db_path"], "/tmp/x.db")

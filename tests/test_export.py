@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlparse
 
 from support import make_db, own
 
-from bt import export, forces
+from batchall import export, forces
 
 
 def make_force(conn, name="Test Lance", picks=(("u-atlas", 1), ("u-locust", 2))):

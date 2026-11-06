@@ -290,7 +290,7 @@ def cmd_serve(args, conn):
 
 
 def make_parser():
-    p = argparse.ArgumentParser(prog="bt", description="BattleTech collection and force builder")
+    p = argparse.ArgumentParser(prog="batchall", description="Batchall: a BattleTech miniature collection manager and force builder")
     p.add_argument("--db", help=f"database path (default {config.DB_PATH})")
     sub = p.add_subparsers(dest="command", required=True)
 

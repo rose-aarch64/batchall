@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bt import db  # noqa: E402
+from batchall import db  # noqa: E402
 
 # uuid, mul_id, chassis, model, kind, tons, bv, role, tech_base
 UNITS = [
@@ -46,7 +46,7 @@ def make_db():
 
 
 def own(conn, uuid, qty=1, painted=0):
-    from bt import collection
+    from batchall import collection
 
     return collection.add(conn, uuid, qty=qty, painted=painted)
 
@@ -57,7 +57,7 @@ def name_mini(conn, entry_id, note="", tag="", faction="", company="", painted=F
     Picks a mini that has no details yet, an unpainted one first, so paint already on the other minis
     stays where it is. Fails if every mini already has details.
     """
-    from bt import collection, copies
+    from batchall import collection, copies
 
     def bare(m):
         return not (m["note"] or m["tag"] or m["faction"] or m["company"] or m["material"] or m["box"])

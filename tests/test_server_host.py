@@ -6,7 +6,7 @@ import unittest
 
 from test_server import seed
 
-from bt import server
+from batchall import server
 
 
 def get(port, host_header, connect_to="127.0.0.1"):

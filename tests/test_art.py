@@ -6,7 +6,7 @@ from pathlib import Path
 
 from support import make_db
 
-from bt import art, catalog, collection
+from batchall import art, catalog, collection
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"fake png body"
 JPG = b"\xff\xd8\xff\xe0" + b"fake jpeg body"
@@ -55,7 +55,7 @@ class CatalogArtTests(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as tmp:
             self.write_catalog(tmp, units)
-            from bt import db
+            from batchall import db
 
             conn = db.connect(":memory:")
             catalog.load(conn, tmp)

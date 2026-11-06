@@ -7,7 +7,7 @@ import unittest
 
 from support import UNITS, make_db
 
-from bt import db, server
+from batchall import db, server
 
 
 def seed(path):
@@ -292,7 +292,7 @@ class ServerTests(unittest.TestCase):
         return out
 
     def test_art_endpoint_serves_cached_images_with_safe_headers(self):
-        from bt import art
+        from batchall import art
 
         art.forget_failures()
         conn = db.connect(self.db_path)
@@ -350,8 +350,8 @@ class ServerTests(unittest.TestCase):
     def test_static_files_and_traversal(self):
         status, body = self.request("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn(b"BattleTech Collection", body)
-        self.assertEqual(self.request("GET", "/%2e%2e/bt/config.py")[0], 404)
+        self.assertIn(b"<title>Batchall</title>", body)
+        self.assertEqual(self.request("GET", "/%2e%2e/batchall/config.py")[0], 404)
 
     def test_meta_lists_formations(self):
         status, meta = self.request("GET", "/api/meta")

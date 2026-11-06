@@ -4,7 +4,7 @@ import unittest
 
 from support import make_db, name_mini, own
 
-from bt import collection, copies
+from batchall import collection, copies
 
 
 def rows(conn, entry_id):

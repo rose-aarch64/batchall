@@ -71,7 +71,7 @@ user can see it.
 
 ## Flows
 
-**Refresh.** `python3 -m bt boxes import` fetches the list page and seed pages (pausing between
+**Refresh.** `python3 -m batchall boxes import` fetches the list page and seed pages (pausing between
 requests), parses, matches and stores. It prints a summary and the packs that did not parse.
 
 **Add a box.** `POST /api/box-catalog/{id}/add` has two modes:

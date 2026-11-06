@@ -259,11 +259,13 @@ body.group-by-box #roster th:nth-child(4), body.group-by-box #roster td:nth-chil
 .company-head .group-toggle.company-banner {
   display: grid; grid-template-columns: 18px 56px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 14px; color: inherit;
 }
-.company-head .group-toggle.company-banner:hover { background: rgba(0, 0, 0, 0.14); }
+/* No hover filter here. A filter makes the button its own layer, and the logo's multiply blend then can't
+   reach the banner color behind it, which brings back a JPEG logo's white background. */
+.company-head .group-toggle.company-banner:hover { background: rgba(0, 0, 0, 0.14); filter: none; }
 .company-head .group-toggle .chev { color: inherit; opacity: 0.8; }
 .banner-logo-slot { width: 56px; height: 56px; display: grid; place-items: center; }
 .banner-logo-slot img { width: 56px; height: 56px; object-fit: contain; margin: 0; padding: 0; background: none; filter: none; }
-.banner-logo-slot img.opaque { mix-blend-mode: multiply; } /* a JPEG's white background takes the banner's color */
+.banner-logo-slot img.opaque { border-radius: 4px; }
 .banner-names { display: grid; gap: 3px; min-width: 0; }
 .company-head .group-toggle .banner-names strong { margin: 0; font-size: 22px; letter-spacing: 0.03em; text-transform: uppercase; line-height: 1.15; overflow-wrap: anywhere; }
 .banner-faction { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.85; }
@@ -456,10 +458,10 @@ tr.all-named { opacity: 0.6; }
 .copy-strip .faction-icon, .copy-strip .faction-icon.company-logo { flex: none; width: 18px; height: 18px; margin: 0; vertical-align: baseline; }
 /* No backing box. A thin light halo keeps dark logos readable on the crimson strip and on the dark table. */
 .faction-icon { width: 16px; height: 16px; object-fit: contain; vertical-align: -3px; margin-right: 6px; filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.9)); }
-/* A logo you saved for a company. A JPEG cannot be see-through, so it is multiplied into what is behind it,
-   which turns its white background into the strip's color. */
+/* A logo you saved for a company. The page cuts the white out of a logo on a white background (see cleanLogo
+   in app.js). A logo still on a solid color after that is shown as it is, with softened corners (.opaque). */
 .faction-icon.company-logo { width: 20px; height: 20px; vertical-align: -5px; }
-.faction-icon.company-logo.opaque { filter: none; mix-blend-mode: multiply; }
+.faction-icon.company-logo.opaque { filter: none; border-radius: 3px; }
 .logo-find { align-self: end; justify-self: start; }
 .logo-picker { max-width: 560px; }
 .logo-picker h3 { margin: 0 0 12px; }
@@ -485,6 +487,11 @@ tr.all-named { opacity: 0.6; }
 .swatches { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
 .swatch { aspect-ratio: 1 / 1; padding: 0; border: 2px solid transparent; border-radius: 2px; cursor: pointer; }
 .swatch[aria-pressed="true"] { border-color: #fff; }
+.faction-palette > summary { cursor: pointer; font-size: 13px; color: var(--muted); padding: 2px 0; }
+.faction-palette > summary:hover { color: #fff; }
+.palette-body { display: grid; gap: 12px; margin-top: 10px; }
+.palette-group h5 { margin: 0 0 6px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.logo-picker { max-height: 92vh; overflow-y: auto; }
 .color-row { display: flex; gap: 8px; align-items: center; }
 .color-input { width: 40px; height: 30px; padding: 0; border: 1px solid var(--border); background: none; border-radius: 2px; cursor: pointer; }
 .hex-input { flex: 1; min-width: 0; font-family: var(--mono); text-transform: uppercase; }

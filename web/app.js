@@ -653,6 +653,7 @@ async function loadCompanyLogos() {
   } catch {
     state.companyLogos = new Map(); // logos are decoration, so a failure here must not stop the page
   }
+  await cleanSavedLogos();
   try {
     state.companyColors = new Map((await api("GET", "/api/company-colors")).map((c) => [c.key, c.color]));
   } catch {
@@ -686,10 +687,86 @@ const companyLogoUrl = (logo) => `/api/company-logos/image?name=${encodeURICompo
 function companyIcon(name) {
   const logo = state.companyLogos?.get(companyKey(name));
   if (!logo) return factionIcon(name);
+  const { src, solid } = logoImage(logo);
   return h("img", {
-    class: "faction-icon company-logo" + (logo.opaque ? " opaque" : ""), src: companyLogoUrl(logo), alt: "",
+    class: "faction-icon company-logo" + (solid ? " opaque" : ""), src, alt: "",
     title: logo.name, loading: "lazy", onerror: (e) => e.target.remove(),
   });
+}
+
+// A logo with a solid white background (most JPEGs) gets that white cut out, so it sits on a banner or strip
+// like a see-through logo. Only the white that touches the picture's edge is removed, so white inside the
+// logo, and a colored disc like Eridani's gold, stay as they are. The result is a PNG kept in memory by
+// logo and version. A logo on any other solid color is shown unchanged.
+const LOGO_CLEAN_SIZE = 192; // long side in pixels, plenty for the 56px banner
+const WHITE = 225; // a pixel counts as background white when its darkest channel is at least this
+
+async function cleanLogo(logo) {
+  const img = new Image();
+  img.src = companyLogoUrl(logo);
+  await img.decode();
+  const scale = Math.min(1, LOGO_CLEAN_SIZE / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const hgt = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = h("canvas", { width: w, height: hgt });
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, hgt);
+  const image = ctx.getImageData(0, 0, w, hgt);
+  const px = image.data;
+  const lightness = (i) => Math.min(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+  const corners = [0, w - 1, (hgt - 1) * w, hgt * w - 1];
+  if (!corners.every((i) => lightness(i) >= WHITE)) return null; // the background is not white
+
+  // Flood in from every edge pixel that is white, clearing the white that connects to the outside.
+  const gone = new Uint8Array(w * hgt);
+  const stack = [];
+  const push = (i) => { if (!gone[i] && lightness(i) >= WHITE) { gone[i] = 1; stack.push(i); } };
+  for (let x = 0; x < w; x++) { push(x); push((hgt - 1) * w + x); }
+  for (let y = 0; y < hgt; y++) { push(y * w); push(y * w + w - 1); }
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % w;
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (i >= w) push(i - w);
+    if (i < w * (hgt - 1)) push(i + w);
+  }
+  // Pixels next to the cleared area that are still light are the soft edge of the logo. Fade them out
+  // by how white they are, so there is no pale ring around it.
+  const soft = [];
+  for (let i = 0; i < gone.length; i++) {
+    if (gone[i]) continue;
+    const x = i % w;
+    const near = (x > 0 && gone[i - 1]) || (x < w - 1 && gone[i + 1]) || (i >= w && gone[i - w]) || (i < w * (hgt - 1) && gone[i + w]);
+    if (near && lightness(i) > 150) soft.push(i);
+  }
+  for (const i of soft) px[i * 4 + 3] = Math.round(255 * Math.min(1, Math.max(0, (255 - lightness(i)) / (255 - 150))));
+  for (let i = 0; i < gone.length; i++) if (gone[i]) px[i * 4 + 3] = 0;
+  ctx.putImageData(image, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+const logoCacheKey = (logo) => `${logo.key}|${logo.version}`;
+
+// Cuts the white out of every saved logo that has a solid background, before the roster is drawn, so a
+// logo never flashes up with its white box. A failure just leaves that logo as it is.
+async function cleanSavedLogos() {
+  state.logoClean = new Map();
+  await Promise.all([...(state.companyLogos?.values() || [])].filter((l) => l.opaque).map(async (logo) => {
+    try {
+      const url = await cleanLogo(logo);
+      if (url) state.logoClean.set(logoCacheKey(logo), url);
+    } catch {
+      // cannot read the pixels or decode the image: the original is used
+    }
+  }));
+}
+
+// What to put in an <img> for a saved logo: the white-cut copy when there is one, else the stored file.
+// `solid` is true when the logo still has a solid background, so the page can round its corners.
+function logoImage(logo) {
+  const clean = state.logoClean?.get(logoCacheKey(logo));
+  return { src: clean || companyLogoUrl(logo), solid: logo.opaque && !clean };
 }
 
 // The strip color part of the company dialog: swatches, a color box and a hex box, with a live preview strip.
@@ -701,6 +778,7 @@ function colorSection(name, finish) {
   const hexBox = h("input", { type: "text", class: "hex-input", maxlength: "7", spellcheck: "false", "aria-label": "Hex color", placeholder: DEFAULT_STRIP_COLOR });
   const picker = h("input", { type: "color", class: "color-input", "aria-label": "Pick a color" });
   const swatches = h("div", { class: "swatches" });
+  const root = h("div", { class: "color-section" });
   const normalize = (value) => {
     let v = value.trim().toUpperCase();
     if (!v.startsWith("#")) v = "#" + v;
@@ -711,7 +789,7 @@ function colorSection(name, finish) {
     preview.setAttribute("style", `--strip: ${draft}; --strip-text: ${textOnColor(draft)}`);
     picker.value = draft.toLowerCase();
     if (document.activeElement !== hexBox) hexBox.value = draft;
-    for (const b of swatches.children) b.setAttribute("aria-pressed", String(b.dataset.color === draft));
+    for (const b of root.querySelectorAll("button.swatch")) b.setAttribute("aria-pressed", String(b.dataset.color === draft));
   };
   const set = (color) => { draft = color; show(); };
   swatches.append(...STRIP_SWATCHES.map((color) => h("button", {
@@ -728,15 +806,65 @@ function colorSection(name, finish) {
     if (!saved) { set(DEFAULT_STRIP_COLOR); return; }
     if (await guarded(() => api("DELETE", `/api/company-colors?name=${encodeURIComponent(name)}`))) { toast(`${name} is back to the default color`); await finish(); }
   };
+  // Colors taken from the faction logos, loaded the first time the section is opened.
+  const paletteBody = h("div", { class: "palette-body" }, h("p", { class: "muted small" }, "Loading…"));
+  const palette = h("details", { class: "faction-palette" }, h("summary", {}, "More colors from faction logos"), paletteBody);
+  palette.addEventListener("toggle", async () => {
+    if (!palette.open || palette.dataset.loaded) return;
+    palette.dataset.loaded = "1";
+    try {
+      state.factionColors ??= await api("GET", "/api/faction-colors");
+      paletteBody.replaceChildren(...factionPaletteGroups(state.factionColors, set));
+      show();
+    } catch (err) {
+      palette.dataset.loaded = ""; // try again the next time it is opened
+      paletteBody.replaceChildren(h("p", { class: "muted small" }, err.message));
+    }
+  });
   show();
-  return h("div", { class: "color-section" },
+  root.append(
     h("h4", {}, "Strip color"),
-    preview, swatches,
+    preview, swatches, palette,
     h("div", { class: "color-row" }, picker, hexBox),
     h("div", { class: "color-row" },
       h("button", { type: "button", class: "icon primary", onclick: save }, "Save color"),
       h("button", { type: "button", class: "icon", onclick: reset }, "Back to crimson")),
     h("p", { class: "muted small" }, "Text on the strip turns dark on a pale color so it stays readable."));
+  return root;
+}
+
+// The faction-logo colors as labelled groups of swatches. Factions that share a color (the Wolf splinters, the
+// Star League entries) get one swatch named for all of them, and each group runs around the color wheel.
+const PALETTE_GROUPS = [
+  ["Inner Sphere", ["Inner Sphere"]], ["Clans", ["IS Clan", "HW Clan"]],
+  ["Periphery", ["Periphery"]], ["Mercenary and other", ["Mercenary", "Other"]],
+];
+
+function hueOf(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  if (max === min) return -1; // greys come first
+  const d = max - min;
+  const hue = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (hue * 60 + 360) % 360;
+}
+
+function factionPaletteGroups(colors, set) {
+  return PALETTE_GROUPS.map(([label, groups]) => {
+    const byColor = new Map();
+    for (const f of colors.filter((c) => groups.includes(c.group))) {
+      if (!byColor.has(f.color)) byColor.set(f.color, []);
+      byColor.get(f.color).push(f.name);
+    }
+    if (!byColor.size) return null;
+    const entries = [...byColor.entries()].sort(([a], [b]) => hueOf(a) - hueOf(b));
+    return h("div", { class: "palette-group" },
+      h("h5", {}, label),
+      h("div", { class: "swatches" }, entries.map(([color, names]) => h("button", {
+        type: "button", class: "swatch", style: `background: ${color}`, "data-color": color,
+        title: `${names.join(", ")} · ${color}`, "aria-label": `${names.join(", ")} ${color}`, onclick: () => set(color),
+      }))));
+  }).filter(Boolean);
 }
 
 // Looks the company up on Sarna and shows what it found, and lets you pick its strip color. Nothing is
@@ -1363,7 +1491,7 @@ function companyBanner(name, list, collapsed, toggle) {
     h("button", { class: "group-toggle company-banner", "aria-expanded": String(!collapsed), onclick: toggle },
       h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"),
       h("span", { class: "banner-logo-slot" }, logo
-        ? h("img", { class: "banner-logo" + (logo.opaque ? " opaque" : ""), src: companyLogoUrl(logo), alt: "", onerror: (e) => e.target.remove() })
+        ? h("img", { class: "banner-logo" + (logoImage(logo).solid ? " opaque" : ""), src: logoImage(logo).src, alt: "", onerror: (e) => e.target.remove() })
         : factionIcon(name) || factionIcon(faction)), // no company logo: the company as a faction, else its faction's logo
       h("span", { class: "banner-names" }, h("strong", {}, name), faction ? h("span", { class: "banner-faction" }, faction) : null),
       h("span", { class: "banner-stats" },

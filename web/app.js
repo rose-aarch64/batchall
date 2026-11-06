@@ -1364,7 +1364,7 @@ function companyBanner(name, list, collapsed, toggle) {
       h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"),
       h("span", { class: "banner-logo-slot" }, logo
         ? h("img", { class: "banner-logo" + (logo.opaque ? " opaque" : ""), src: companyLogoUrl(logo), alt: "", onerror: (e) => e.target.remove() })
-        : factionIcon(name)),
+        : factionIcon(name) || factionIcon(faction)), // no company logo: the company as a faction, else its faction's logo
       h("span", { class: "banner-names" }, h("strong", {}, name), faction ? h("span", { class: "banner-faction" }, faction) : null),
       h("span", { class: "banner-stats" },
         h("span", { class: "banner-count" }, `${countText(list.length, t.models)} · ${t.bv.toLocaleString()} BV`),

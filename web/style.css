@@ -161,7 +161,7 @@ td.actions button { margin-left: 2px; }
 td input.box-input { width: 100%; min-width: 190px; }
 .suggest {
   position: fixed;
-  z-index: 20;
+  z-index: 60; /* above the bulk bar, whose box field uses it too */
   max-width: min(640px, 95vw);
   max-height: 260px;
   overflow-y: auto;
@@ -438,7 +438,8 @@ body.has-bulkbar { padding-bottom: 84px; }
 .bulk-count { display: flex; align-items: center; gap: 10px; margin-right: 6px; }
 .bulk-count small { font-weight: 400; color: var(--muted); }
 .bulkbar button.hot { border-color: var(--accent); background: #3a1a21; }
-.bulk-menu-wrap { position: relative; }
+.bulk-field { display: flex; gap: 6px; padding: 4px 8px 8px; }
+.bulk-input { flex: 1; min-width: 200px; }
 .bulk-menu { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 51; min-width: 200px; padding: 4px; display: grid; background: #231a1d; border: 1px solid var(--accent); border-radius: 3px; box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6); }
 .bulk-menu[hidden] { display: none; }
 .bulk-menu-head { padding: 6px 12px 4px; color: var(--muted); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }

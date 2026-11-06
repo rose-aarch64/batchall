@@ -172,12 +172,16 @@
   <div id="bulkbar" class="bulkbar" role="region" aria-label="Changes for the selected minis" hidden>
     <span class="bulk-count"><span class="sel-input is-on" aria-hidden="true"></span><strong id="bulk-count-text"></strong></span>
     <button type="button" id="bulk-select-all"></button>
-    <span class="bulk-menu-wrap">
-      <button type="button" id="bulk-material" class="hot" aria-haspopup="menu" aria-expanded="false">Set material &#9662;</button>
-      <div id="bulk-material-menu" class="bulk-menu" role="menu" aria-label="Material for the selected minis" hidden></div>
-    </span>
+    <button type="button" data-bulk="painted">Mark painted</button>
+    <button type="button" data-bulk="unpainted">Mark unpainted</button>
+    <button type="button" data-bulk="material" class="hot" aria-haspopup="menu" aria-expanded="false">Set material &#9662;</button>
+    <button type="button" data-bulk="box" aria-haspopup="dialog" aria-expanded="false">Set box&hellip;</button>
+    <button type="button" data-bulk="faction" aria-haspopup="dialog" aria-expanded="false">Set faction&hellip;</button>
+    <button type="button" data-bulk="tag" aria-haspopup="dialog" aria-expanded="false">Set tag&hellip;</button>
     <span class="spacer"></span>
+    <button type="button" id="bulk-remove" class="danger"></button>
     <button type="button" id="bulk-clear">Clear selection</button>
+    <div id="bulk-popover" class="bulk-menu" hidden></div>
   </div>
 
   <div id="suggest" class="suggest" role="listbox" aria-label="Suggestions" hidden></div>

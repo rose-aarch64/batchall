@@ -795,38 +795,99 @@ function renderBulkBar() {
   const picked = state.selected.size, shown = shownMiniIds().length;
   $("bulkbar").hidden = picked === 0;
   document.body.classList.toggle("has-bulkbar", picked > 0); // room at the bottom so the bar never hides the last cards
-  if (!picked) { closeBulkMenu(); return; }
+  if (!picked) { closeBulkPopover(); return; }
   $("bulk-count-text").replaceChildren(`${picked} selected `, h("small", {}, `of ${shown} shown`));
   $("bulk-select-all").hidden = picked >= shown;
   $("bulk-select-all").textContent = `Select all ${shown} shown`;
+  $("bulk-remove").textContent = `Remove ${picked}…`;
 }
 
-function closeBulkMenu() {
-  $("bulk-material-menu").hidden = true;
-  $("bulk-material").setAttribute("aria-expanded", "false");
+// The small panel above a bulk button: the material choices, or a box to type a box, faction or tag in.
+function closeBulkPopover() {
+  $("bulk-popover").hidden = true;
+  for (const button of document.querySelectorAll("#bulkbar [aria-haspopup]")) button.setAttribute("aria-expanded", "false");
 }
 
-function openBulkMenu() {
-  const menu = $("bulk-material-menu");
+function openBulkPopover(button, parts) {
+  const pop = $("bulk-popover");
+  pop.replaceChildren(...parts);
+  pop.hidden = false;
+  const bar = $("bulkbar");
+  pop.style.left = `${Math.max(8, Math.min(button.offsetLeft, bar.clientWidth - pop.offsetWidth - 12))}px`; // stays inside the bar
+  for (const b of document.querySelectorAll("#bulkbar [aria-haspopup]")) b.setAttribute("aria-expanded", String(b === button));
+  (pop.querySelector("input") || pop.querySelector(".bulk-menu-item"))?.focus();
+}
+
+// Saves the same change on every selected mini, then reloads. The selection stays so another change can
+// follow, and the reload also puts things right if the change was refused.
+async function bulkPatch(fields, message) {
+  const ids = [...state.selected];
+  closeBulkPopover();
+  await guarded(async () => {
+    const result = await api("PATCH", "/api/minis", { ids, ...fields });
+    toast(message(plural(result.updated)));
+  });
+  await loadCollection();
+}
+
+const bulkMaterial = (value) => bulkPatch({ material: value }, (n) => (value ? `Set ${value} on ${n}` : `Cleared the material on ${n}`));
+const bulkPainted = (on) => bulkPatch({ painted: on }, (n) => `Marked ${n} ${on ? "painted" : "unpainted"}`);
+
+function materialMenu() {
   const choices = [["", NO_MATERIAL], ...MATERIALS.map((m) => [m, m])]; // the same order as a card's dropdown
-  menu.replaceChildren(
+  return [
     h("div", { class: "bulk-menu-head" }, `Material for ${plural(state.selected.size)}`),
     ...choices.map(([value, label]) => h("button", {
-      type: "button", role: "menuitem", class: "bulk-menu-item", onclick: () => bulkSetMaterial(value),
-    }, label)));
-  menu.hidden = false;
-  $("bulk-material").setAttribute("aria-expanded", "true");
-  menu.querySelector("button").focus();
+      type: "button", role: "menuitem", class: "bulk-menu-item", onclick: () => bulkMaterial(value),
+    }, label)),
+  ];
 }
 
-async function bulkSetMaterial(value) {
-  const ids = [...state.selected];
-  closeBulkMenu();
-  await guarded(async () => {
-    const result = await api("PATCH", "/api/minis", { ids, material: value });
-    toast(value ? `Set ${value} on ${plural(result.updated)}` : `Cleared the material on ${plural(result.updated)}`);
+const BULK_FIELDS = {
+  box: { label: "Box", attrs: { "data-suggest": "box" } },
+  faction: { label: "Faction", attrs: { list: "copy-faction-options" } },
+  tag: { label: "Tag", attrs: { list: "tag-options" } },
+};
+
+// A box to type a value in, with the same suggestions as the matching field elsewhere. Apply sets it on every
+// selected mini. Clearing is its own button, so an empty box can never wipe a field by accident.
+function fieldPopover(field) {
+  const spec = BULK_FIELDS[field];
+  const lower = spec.label.toLowerCase();
+  const input = h("input", {
+    type: "text", class: "bulk-input", autocomplete: "off", placeholder: spec.label,
+    "aria-label": `${spec.label} for the selected minis`, ...spec.attrs,
   });
-  await loadCollection(); // keeps the selection, so another change can follow. It also puts things right after an error.
+  const set = (value) => bulkPatch({ [field]: value }, (n) => (value ? `Set the ${lower} to "${value}" on ${n}` : `Cleared the ${lower} on ${n}`));
+  const apply = () => { const value = input.value.trim(); if (value) set(value); else input.focus(); };
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    if (suggest.input === input && !$("suggest").hidden && suggest.index >= 0) return; // Enter picks the highlighted suggestion
+    e.preventDefault();
+    apply();
+  });
+  return [
+    h("div", { class: "bulk-menu-head" }, `${spec.label} for ${plural(state.selected.size)}`),
+    h("div", { class: "bulk-field" }, input, h("button", { type: "button", class: "primary", onclick: apply }, "Apply")),
+    h("button", { type: "button", class: "bulk-menu-item", onclick: () => set("") }, `Clear the ${lower}`),
+  ];
+}
+
+async function bulkRemove() {
+  const ids = [...state.selected];
+  closeBulkPopover();
+  const sure = await confirmDialog(
+    `Remove ${plural(ids.length)} from your collection? A unit with none left also leaves any saved forces.`,
+    { confirmLabel: `Remove ${ids.length}`, danger: true });
+  if (!sure) return;
+  await guarded(async () => {
+    const result = await api("DELETE", "/api/minis", { ids });
+    toast(`Removed ${plural(result.removed)}`);
+  });
+  await loadCollection();
+  for (const id of [...state.tray.units.keys()]) if (!itemById(id)) state.tray.units.delete(id); // a unit with no minis left
+  renderTray();
+  await loadForces();
 }
 
 function setupBulkBar() {
@@ -839,13 +900,33 @@ function setupBulkBar() {
   });
   $("bulk-select-all").addEventListener("click", () => setSelected(shownMiniIds(), true));
   $("bulk-clear").addEventListener("click", clearSelection);
-  $("bulk-material").addEventListener("click", () => ($("bulk-material-menu").hidden ? openBulkMenu() : closeBulkMenu()));
+  $("bulk-remove").addEventListener("click", bulkRemove);
+  for (const button of document.querySelectorAll("#bulkbar [data-bulk]")) {
+    button.addEventListener("click", () => {
+      const kind = button.dataset.bulk;
+      if (kind === "painted" || kind === "unpainted") { bulkPainted(kind === "painted"); return; }
+      if (button.getAttribute("aria-expanded") === "true") { closeBulkPopover(); return; }
+      openBulkPopover(button, kind === "material" ? materialMenu() : fieldPopover(kind));
+    });
+  }
+  // A click outside the panel closes it. A suggestion belongs to the panel, but the list removes the item you
+  // press before the click arrives, so whether the press was inside is decided on mouse-down, while it still exists.
+  const insidePanel = "#bulk-popover, #bulkbar [data-bulk], #suggest";
+  let pressedInside = false;
+  document.addEventListener("mousedown", (e) => { pressedInside = Boolean(e.target.closest(insidePanel)); }, true);
   document.addEventListener("click", (e) => {
-    if (!$("bulk-material-menu").hidden && !e.target.closest(".bulk-menu-wrap")) closeBulkMenu();
+    const inside = pressedInside || Boolean(e.target.closest(insidePanel)); // a key press has no mouse-down
+    pressedInside = false;
+    if (!inside && !$("bulk-popover").hidden) closeBulkPopover();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || document.querySelector(".modal-backdrop")) return;
-    if (!$("bulk-material-menu").hidden) { closeBulkMenu(); $("bulk-material").focus(); return; }
+    if (!$("bulk-popover").hidden) {
+      const opener = document.querySelector('#bulkbar [aria-expanded="true"]');
+      closeBulkPopover();
+      opener?.focus();
+      return;
+    }
     if (e.target.closest?.("input[type=text], input[type=search], textarea, select")) return; // Escape in a box belongs to that box
     if (state.selected.size) clearSelection();
   });

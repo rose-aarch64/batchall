@@ -160,6 +160,37 @@ class ServerTests(unittest.TestCase):
         by_name = {i["name"]: [m["material"] for m in i["minis"]] for i in items}
         self.assertEqual(by_name["Atlas AS7-D"], ["", "", "Resin"])  # the refused calls changed nothing
 
+    def test_bulk_remove_over_api(self):
+        status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 3})
+        status, other = self.request("POST", "/api/collection", {"unit_uuid": "u-locust", "qty": 1})
+        atlas_ids = [m["id"] for m in entry["minis"]]
+        locust_id = other["minis"][0]["id"]
+
+        for bad in (
+            {}, {"ids": []}, {"ids": "1"}, {"ids": ["x"]}, {"ids": [True]}, {"ids": [1.5]},
+            {"ids": atlas_ids[:1] + [99999]}, {"ids": list(range(1, 6002))},
+        ):
+            self.assertEqual(self.request("DELETE", "/api/minis", bad)[0], 400, msg=str(bad)[:60])
+        status, items = self.request("GET", "/api/collection")
+        self.assertEqual(sum(i["qty"] for i in items), 4)  # the refused calls removed nothing
+
+        status, body = self.request("DELETE", "/api/minis", {"ids": [atlas_ids[0], locust_id]})
+        self.assertEqual((status, body), (200, {"removed": 2}))
+        status, items = self.request("GET", "/api/collection")
+        self.assertEqual([(i["name"], i["qty"]) for i in items], [("Atlas AS7-D", 2)])  # the Locust left with its last mini
+
+    def test_bulk_edit_accepts_every_field_over_api(self):
+        status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 3})
+        ids = [m["id"] for m in entry["minis"]]
+        for fields in ({"painted": True}, {"box": "Shelf 2"}, {"faction": "Wolf's Dragoons"}, {"tag": "Trial"}):
+            status, body = self.request("PATCH", "/api/minis", {"ids": ids[:2], **fields})
+            self.assertEqual((status, body), (200, {"updated": 2}), msg=str(fields))
+        status, items = self.request("GET", "/api/collection")
+        minis = items[0]["minis"]
+        self.assertEqual([(m["painted"], m["box"], m["faction"], m["tag"]) for m in minis],
+                         [(True, "Shelf 2", "Wolf's Dragoons", "Trial")] * 2 + [(False, "", "", "")])
+        self.assertEqual(items[0]["painted"], 2)
+
     def test_the_named_copy_endpoints_are_gone(self):
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
         mini = entry["minis"][0]

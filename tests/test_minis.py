@@ -185,6 +185,54 @@ class BulkUpdateTests(unittest.TestCase):
         self.assertEqual(collection.get(self.conn, self.locust["id"])["painted"], 1)  # untouched
 
 
+class BulkDeleteTests(unittest.TestCase):
+    """Remove many minis at once, all or nothing."""
+
+    def setUp(self):
+        self.conn = make_db()
+        self.atlas = own(self.conn, "u-atlas", qty=3, painted=2)
+        self.locust = own(self.conn, "u-locust", qty=2)
+        self.atlas_ids = [m["id"] for m in minis_of(self.conn, self.atlas["id"])]
+        self.locust_ids = [m["id"] for m in minis_of(self.conn, self.locust["id"])]
+
+    def test_removes_the_given_minis_across_entries_and_keeps_the_rest(self):
+        gone = [self.atlas_ids[0], self.locust_ids[1]]
+        self.assertEqual(copies.delete_many(self.conn, gone), 2)
+        self.assertEqual([m["id"] for m in minis_of(self.conn, self.atlas["id"])], self.atlas_ids[1:])
+        self.assertEqual([m["id"] for m in minis_of(self.conn, self.locust["id"])], [self.locust_ids[0]])
+
+    def test_the_entries_counts_follow(self):
+        copies.delete_many(self.conn, self.atlas_ids[:2])  # the first two Atlases are the painted ones
+        atlas = collection.get(self.conn, self.atlas["id"])
+        self.assertEqual((atlas["qty"], atlas["painted"]), (1, 0))
+
+    def test_removing_every_mini_of_a_unit_removes_the_unit(self):
+        copies.delete_many(self.conn, self.locust_ids)
+        with self.assertRaises(collection.CollectionError):
+            collection.get(self.conn, self.locust["id"])
+        self.assertEqual(collection.get(self.conn, self.atlas["id"])["qty"], 3)
+
+    def test_an_id_listed_twice_counts_once(self):
+        self.assertEqual(copies.delete_many(self.conn, [self.atlas_ids[0], self.atlas_ids[0]]), 1)
+        self.assertEqual(collection.get(self.conn, self.atlas["id"])["qty"], 2)
+
+    def test_an_unknown_id_removes_nothing_at_all(self):
+        with self.assertRaises(copies.CopyError):
+            copies.delete_many(self.conn, [self.atlas_ids[0], 99999])
+        self.assertEqual(collection.get(self.conn, self.atlas["id"])["qty"], 3)
+
+    def test_no_ids_is_rejected(self):
+        with self.assertRaises(copies.CopyError):
+            copies.delete_many(self.conn, [])
+
+    def test_removing_a_unit_also_takes_it_out_of_saved_forces(self):
+        from batchall import forces
+
+        forces.save(self.conn, "Test force", "lance", [{"collection_id": self.locust["id"], "qty": 1}], target_bv=2000)
+        copies.delete_many(self.conn, self.locust_ids)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM force_units").fetchone()[0], 0)
+
+
 class MaterialFilterTests(unittest.TestCase):
     def setUp(self):
         self.conn = make_db()

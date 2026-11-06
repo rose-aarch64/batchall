@@ -402,7 +402,7 @@ button.unit-link:hover { background: none; filter: none; color: var(--accent); t
 .detail-card .copy-strip .strip-line.sub { font-size: 14px; }
 .detail-card .copy-strip .faction-icon, .detail-card .copy-strip .faction-icon.company-logo { width: 28px; height: 28px; }
 .detail-card-body { padding: 16px 18px 18px; display: grid; gap: 6px; }
-.detail-card-body h2 { margin: 0; background: none; clip-path: none; padding: 0; font-size: 30px; line-height: 1.15; letter-spacing: 0; color: #fff; }
+.detail-card-body h2 { margin: 0; background: none; clip-path: none; padding: 0; font-size: 30px; line-height: 1.15; letter-spacing: 0; text-transform: none; color: #fff; }
 .detail-card-body h2::before { content: none; }
 .detail-card-meta { color: var(--muted); font-size: 16px; }
 .detail-card-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }

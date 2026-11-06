@@ -5,11 +5,15 @@ import json
 import re
 
 from . import availability
+from . import photos as photos_module
 from .catalog import unit_dict
 
-# Every owned mini is a copies row. A row carries details when it has any text of its own.
+# Every owned mini is a copies row. A row carries details when it has any text of its own, or a photo.
 # Quantity changes never drop such a mini.
-DETAILED = "(note != '' OR tag != '' OR faction != '' OR company != '' OR material != '' OR box != '')"
+DETAILED = (
+    "(note != '' OR tag != '' OR faction != '' OR company != '' OR material != '' OR box != '' "
+    "OR id IN (SELECT copy_id FROM mini_photos))"
+)
 
 COLLECTION_SELECT = """
 SELECT c.id AS id, c.unit_uuid, c.qty, c.painted, c.notes, c.box,
@@ -32,12 +36,14 @@ def _row(row):
 def _attach_minis(conn, items):
     """Give each row its minis, oldest first, each with its own fields."""
     by_entry = {}
+    photos = photos_module.summaries(conn)
     for c in conn.execute(
         "SELECT id, collection_id, note, tag, faction, company, material, painted, box FROM copies ORDER BY id"
     ):
         by_entry.setdefault(c["collection_id"], []).append({
             "id": c["id"], "note": c["note"], "tag": c["tag"], "faction": c["faction"],
             "company": c["company"], "material": c["material"], "painted": bool(c["painted"]), "box": c["box"],
+            "photo": photos.get(c["id"]),  # None for a mini with no photo
         })
     for item in items:
         item["minis"] = by_entry.get(item["id"], [])

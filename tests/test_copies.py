@@ -76,11 +76,11 @@ class MiniTests(unittest.TestCase):
             rows["Atlas AS7-D"],
             [
                 {"id": first["id"], "note": "black", "tag": "Black Widow Co", "faction": "", "company": "",
-                 "material": "", "painted": False, "box": ""},
+                 "material": "", "painted": False, "box": "", "photo": None},
                 {"id": second["id"], "note": "red", "tag": "", "faction": "", "company": "",
-                 "material": "", "painted": False, "box": ""},
+                 "material": "", "painted": False, "box": "", "photo": None},
                 {"id": rows["Atlas AS7-D"][2]["id"], "note": "", "tag": "", "faction": "", "company": "",
-                 "material": "", "painted": False, "box": ""},
+                 "material": "", "painted": False, "box": "", "photo": None},
             ],
         )
         self.assertEqual(len(rows["Locust LCT-1V"]), 1)

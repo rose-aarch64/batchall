@@ -15,10 +15,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import (
-    art, availability, boxes, builder, catalog, collection, config, copies, db, details, export,
-    formations, forces,
+    art, availability, boxes, builder, catalog, collection, colors, config, copies, db, details, export,
+    formations, forces, logos, photos,
 )
 from .kinds import KIND_LABELS, KINDS
+
+MAX_BODY_BYTES = 14_000_000  # a mini photo is sent as base64, and the biggest one we keep is 8 MB
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 WILDCARD_HOSTS = {"0.0.0.0", "::", ""}
@@ -230,6 +232,80 @@ def get_faction_icon(conn, query, body, faction_id):
     return RawResponse(data, content_type, cache_seconds=86400)
 
 
+def get_company_logos(conn, query, body):
+    return logos.list_all(conn)
+
+
+def get_company_logo_candidates(conn, query, body):
+    try:
+        return logos.candidates(_first(query, "name", ""))
+    except OSError as exc:
+        raise ApiError(f"could not reach Sarna: {exc}", HTTPStatus.BAD_GATEWAY)
+
+
+def get_company_logo(conn, query, body):
+    found = logos.get(conn, _first(query, "name", ""))
+    if found is None:
+        raise ApiError("no logo for this company", HTTPStatus.NOT_FOUND)
+    data, content_type = found
+    return RawResponse(data, content_type, cache_seconds=86400)
+
+
+def put_company_logo(conn, query, body):
+    try:
+        return logos.save(conn, body.get("name"), body.get("image_url"), source_title=body.get("source_title") or "")
+    except OSError as exc:
+        raise ApiError(f"could not download the image: {exc}", HTTPStatus.BAD_GATEWAY)
+
+
+def delete_company_logo(conn, query, body):
+    if not logos.remove(conn, _first(query, "name", "")):
+        raise ApiError("no logo for this company", HTTPStatus.NOT_FOUND)
+    return {"removed": True}
+
+
+def get_mini_photo(conn, query, body, copy_id):
+    found = photos.get(conn, int(copy_id))
+    if found is None:
+        raise ApiError("this mini has no photo", HTTPStatus.NOT_FOUND)
+    data, content_type = found
+    return RawResponse(data, content_type, cache_seconds=86400)  # the page adds the photo's version to the address
+
+
+def put_mini_photo(conn, query, body, copy_id):
+    return photos.save(
+        conn, int(copy_id), body.get("image"), body.get("width"), body.get("height"),
+        zoom=body.get("zoom", 1), cx=body.get("cx", 0.5), cy=body.get("cy", 0.5),
+    )
+
+
+def patch_mini_photo(conn, query, body, copy_id):
+    try:
+        return photos.set_crop(conn, int(copy_id), body.get("zoom"), body.get("cx"), body.get("cy"))
+    except LookupError as exc:
+        raise ApiError(str(exc), HTTPStatus.NOT_FOUND)
+
+
+def delete_mini_photo(conn, query, body, copy_id):
+    if not photos.remove(conn, int(copy_id)):
+        raise ApiError("this mini has no photo", HTTPStatus.NOT_FOUND)
+    return {"removed": True}
+
+
+def get_company_colors(conn, query, body):
+    return colors.list_all(conn)
+
+
+def put_company_color(conn, query, body):
+    return colors.save(conn, body.get("name"), body.get("color"))
+
+
+def delete_company_color(conn, query, body):
+    if not colors.remove(conn, _first(query, "name", "")):
+        raise ApiError("no color for this company", HTTPStatus.NOT_FOUND)
+    return {"removed": True}
+
+
 def get_unit_detail(conn, query, body, unit_uuid):
     unit = details.get(conn, unit_uuid)
     if unit is None:
@@ -326,6 +402,18 @@ ROUTES = [
     ("POST", r"/api/box-catalog/(\d+)/add", post_box_add),
     ("GET", r"/api/art/([^/]+)", get_unit_art),
     ("GET", r"/api/faction-icon/(\d+)", get_faction_icon),
+    ("GET", r"/api/company-logos", get_company_logos),
+    ("GET", r"/api/company-logos/candidates", get_company_logo_candidates),
+    ("GET", r"/api/company-logos/image", get_company_logo),
+    ("PUT", r"/api/company-logos", put_company_logo),
+    ("DELETE", r"/api/company-logos", delete_company_logo),
+    ("GET", r"/api/minis/(\d+)/photo", get_mini_photo),
+    ("PUT", r"/api/minis/(\d+)/photo", put_mini_photo),
+    ("PATCH", r"/api/minis/(\d+)/photo", patch_mini_photo),
+    ("DELETE", r"/api/minis/(\d+)/photo", delete_mini_photo),
+    ("GET", r"/api/company-colors", get_company_colors),
+    ("PUT", r"/api/company-colors", put_company_color),
+    ("DELETE", r"/api/company-colors", delete_company_color),
     ("GET", r"/api/units/([^/]+)", get_unit_detail),
     ("GET", r"/api/collection/(\d+)/variants", get_variants),
     ("POST", r"/api/collection/(\d+)/swap", post_swap),
@@ -381,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", raw.content_type)
         self.send_header("Content-Length", str(len(raw.data)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        # An image opened on its own page (an SVG could carry script) gets no script, no network and no origin.
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
         self.send_header(
             "Cache-Control", f"private, max-age={raw.cache_seconds}" if raw.cache_seconds else "no-store"
         )
@@ -391,6 +481,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
             return {}
+        if length > MAX_BODY_BYTES:
+            raise ApiError("request body is too large", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
         if "application/json" not in (self.headers.get("Content-Type") or ""):
             raise ApiError("request body must be application/json", HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
         try:

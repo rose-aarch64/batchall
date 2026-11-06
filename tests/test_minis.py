@@ -25,7 +25,7 @@ class MiniFieldTests(unittest.TestCase):
         self.assertEqual(len(minis), 3)
         self.assertEqual(
             set(minis[0]),
-            {"id", "note", "tag", "faction", "company", "material", "painted", "box"},
+            {"id", "note", "tag", "faction", "company", "material", "painted", "box", "photo"},
         )
         self.assertEqual([m["painted"] for m in minis], [True, False, False])
         self.assertEqual(minis[0]["material"], "")

@@ -73,6 +73,34 @@ CREATE TABLE IF NOT EXISTS copies (
 CREATE INDEX IF NOT EXISTS idx_copies_collection ON copies(collection_id);
 CREATE INDEX IF NOT EXISTS idx_copies_tag ON copies(tag);
 
+CREATE TABLE IF NOT EXISTS company_logos (
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    data BLOB NOT NULL,
+    source_title TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS mini_photos (
+    copy_id INTEGER PRIMARY KEY REFERENCES copies(id) ON DELETE CASCADE,
+    content_type TEXT NOT NULL,
+    data BLOB NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    zoom REAL NOT NULL DEFAULT 1,
+    cx REAL NOT NULL DEFAULT 0.5,
+    cy REAL NOT NULL DEFAULT 0.5,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS company_colors (
+    key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS forces (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

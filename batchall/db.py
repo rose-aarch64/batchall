@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import config
 
-SCHEMA = """
+SHARED_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE TABLE IF NOT EXISTS units (
@@ -49,6 +49,32 @@ CREATE TABLE IF NOT EXISTS availability (
     PRIMARY KEY (faction_id, era_id)
 );
 
+CREATE TABLE IF NOT EXISTS boxes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    section TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_boxes_name ON boxes(name);
+
+CREATE TABLE IF NOT EXISTS box_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    mini_name TEXT NOT NULL,
+    card_variant TEXT NOT NULL DEFAULT '',
+    qty INTEGER NOT NULL DEFAULT 1 CHECK (qty > 0),
+    unit_uuid TEXT,
+    status TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    card_units TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_box_items_box ON box_items(box_id);
+"""
+
+USER_SCHEMA = """
 CREATE TABLE IF NOT EXISTS collection (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     unit_uuid TEXT NOT NULL UNIQUE,
@@ -113,30 +139,6 @@ CREATE TABLE IF NOT EXISTS forces (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS boxes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    section TEXT NOT NULL DEFAULT '',
-    source_url TEXT NOT NULL DEFAULT '',
-    imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_boxes_name ON boxes(name);
-
-CREATE TABLE IF NOT EXISTS box_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
-    mini_name TEXT NOT NULL,
-    card_variant TEXT NOT NULL DEFAULT '',
-    qty INTEGER NOT NULL DEFAULT 1 CHECK (qty > 0),
-    unit_uuid TEXT,
-    status TEXT NOT NULL,
-    note TEXT NOT NULL DEFAULT '',
-    card_units TEXT NOT NULL DEFAULT '[]'
-);
-CREATE INDEX IF NOT EXISTS idx_box_items_box ON box_items(box_id);
-
 CREATE TABLE IF NOT EXISTS force_units (
     force_id INTEGER NOT NULL REFERENCES forces(id) ON DELETE CASCADE,
     collection_id INTEGER NOT NULL REFERENCES collection(id) ON DELETE CASCADE,
@@ -145,6 +147,47 @@ CREATE TABLE IF NOT EXISTS force_units (
     PRIMARY KEY (force_id, collection_id, as_uuid)
 );
 """
+
+SCHEMA = SHARED_SCHEMA + USER_SCHEMA
+
+ACCOUNT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    handle TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'unlisted', 'public')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_hash TEXT NOT NULL UNIQUE,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+"""
+
+# Parents first, so rows can be copied or created in order without breaking a foreign key.
+USER_TABLES = (
+    "collection", "copies", "mini_photos", "forces", "force_units", "company_logos", "company_colors",
+)
+
+
+class MultiUserDatabase(ValueError):
+    """The database file is in multi-user mode and cannot be opened as a single-user database."""
 
 
 def adopt_legacy_database(target, legacy):
@@ -187,6 +230,8 @@ def connect(path=None):
     if path is None and config.DB_IS_DEFAULT:
         adopt_legacy_database(config.DB_PATH, config.LEGACY_DB_PATH)
     path = str(path or config.DB_PATH)
+    if is_multiuser(path):
+        raise MultiUserDatabase(f"{path} is a multi-user database; open it with connect_shared/connect_user")
     if path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -197,27 +242,79 @@ def connect(path=None):
     return conn
 
 
+def is_multiuser(path=None):
+    """True when the file's ``meta`` table says it is a multi-user database.
+
+    A missing file, an in-memory database and a file with no ``meta`` table are all False. The file is
+    opened read-only, so asking never creates it.
+    """
+    path = str(path or config.DB_PATH)
+    if path == ":memory:" or not Path(path).is_file():
+        return False
+    try:
+        conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return False
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key = 'multiuser'").fetchone()
+    except sqlite3.OperationalError:  # no meta table
+        return False
+    finally:
+        conn.close()
+    return row is not None and row[0] == "1"
+
+
+def connect_shared(path=None):
+    """Open the shared database: the catalog, boxes and the account tables. WAL mode is turned on."""
+    path = str(path or config.DB_PATH)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(SHARED_SCHEMA + ACCOUNT_SCHEMA)
+    _migrate_shared(conn)
+    return conn
+
+
+def user_db_path(path, user_id):
+    """Where one user's database lives: ``users/<id>.db`` beside the shared file."""
+    return Path(path or config.DB_PATH).parent / "users" / f"{int(user_id)}.db"
+
+
+def connect_user(user_id, path=None):
+    """Open one user's database as ``main`` with the shared database attached as ``shared``.
+
+    SQLite looks an unqualified table name up in ``main`` first and then in attached files. The
+    collection and force tables are found in the user's file and ``units``, ``factions`` and the rest in
+    the shared one, so queries written for a single database run unchanged. The shared file is not
+    created or changed here; open it with ``connect_shared`` first.
+    """
+    shared_path = Path(path or config.DB_PATH)
+    target = user_db_path(shared_path, user_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(target)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(USER_SCHEMA)
+    _migrate_user(conn)
+    conn.execute("ATTACH DATABASE ? AS shared", (str(shared_path.resolve()),))
+    conn.execute("PRAGMA shared.journal_mode = WAL")
+    return conn
+
+
 def _migrate(conn):
     """Bring databases created by earlier versions up to the current schema."""
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(collection)")}
-    if "box" not in columns:
-        with conn:
-            conn.execute("ALTER TABLE collection ADD COLUMN box TEXT NOT NULL DEFAULT ''")
+    _migrate_shared(conn)
+    _migrate_user(conn)
+
+
+def _migrate_shared(conn):
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(box_items)")}
     if "card_units" not in columns:  # filled in by the next `boxes import`
         with conn:
             conn.execute("ALTER TABLE box_items ADD COLUMN card_units TEXT NOT NULL DEFAULT '[]'")
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(copies)")}
-    for column in ("faction", "company", "material"):  # empty until a mini is given one
-        if column not in columns:
-            with conn:
-                conn.execute(f"ALTER TABLE copies ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
-    if "painted" not in columns:  # a named mini is unpainted until marked; the entry's count is unchanged
-        with conn:
-            conn.execute("ALTER TABLE copies ADD COLUMN painted INTEGER NOT NULL DEFAULT 0")
-    if "box" not in columns:  # empty means the mini sits in its entry's box
-        with conn:
-            conn.execute("ALTER TABLE copies ADD COLUMN box TEXT NOT NULL DEFAULT ''")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(units)")}
     if "art" not in columns:  # filled in by the next `catalog import`
         with conn:
@@ -229,6 +326,24 @@ def _migrate(conn):
     if "img" not in columns:  # NULL until `catalog import` or the app's start-up fills it from factions.json
         with conn:
             conn.execute("ALTER TABLE factions ADD COLUMN img TEXT")
+
+
+def _migrate_user(conn):
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(collection)")}
+    if "box" not in columns:
+        with conn:
+            conn.execute("ALTER TABLE collection ADD COLUMN box TEXT NOT NULL DEFAULT ''")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(copies)")}
+    for column in ("faction", "company", "material"):  # empty until a mini is given one
+        if column not in columns:
+            with conn:
+                conn.execute(f"ALTER TABLE copies ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+    if "painted" not in columns:  # a named mini is unpainted until marked; the entry's count is unchanged
+        with conn:
+            conn.execute("ALTER TABLE copies ADD COLUMN painted INTEGER NOT NULL DEFAULT 0")
+    if "box" not in columns:  # empty means the mini sits in its entry's box
+        with conn:
+            conn.execute("ALTER TABLE copies ADD COLUMN box TEXT NOT NULL DEFAULT ''")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(force_units)")}
     if "as_uuid" not in columns:  # empty means the force fields the mini as the variant owned
         _add_force_unit_variants(conn)

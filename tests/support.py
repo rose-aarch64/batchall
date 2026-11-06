@@ -25,6 +25,12 @@ UNITS = [
 
 def make_db():
     conn = db.connect(":memory:")
+    seed_catalog(conn)
+    return conn
+
+
+def seed_catalog(conn):
+    """Insert the synthetic units, factions, eras and availability into a connection."""
     with conn:
         for uuid, mul, chassis, model, kind, tons, bv, role, tech in UNITS:
             conn.execute(
@@ -42,7 +48,6 @@ def make_db():
         )
         conn.execute("INSERT INTO availability VALUES (2, 13, ?)", (json.dumps([5, 8]),))
         conn.execute("INSERT INTO availability VALUES (1, 10, ?)", (json.dumps([1]),))
-    return conn
 
 
 def own(conn, uuid, qty=1, painted=0):

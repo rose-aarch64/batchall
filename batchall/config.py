@@ -23,6 +23,7 @@ WEB_DIR = ROOT / "web"
 
 MEKBAY_DB_URL = "https://db.mekbay.com"
 MEKBAY_ART_URL = MEKBAY_DB_URL + "/images/fluff/"
+MEKBAY_SITE_URL = "https://mekbay.com"  # faction logos are served here, not by the data host
 CATALOG_FILES = ("units", "factions", "eras")
 FLUFF_FILE = "units-fluff"  # unit lore; about 50 MB and optional, imports work without it
 USER_AGENT = "batchall/0.1"

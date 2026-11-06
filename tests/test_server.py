@@ -314,6 +314,35 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.raw("/api/art/does-not-exist")[0], 404)
         self.assertEqual(self.raw("/api/art/u-atlas", {"Host": "evil.example.com"})[0], 403)
 
+    def test_faction_icon_endpoint_serves_cached_logos_with_safe_headers(self):
+        from batchall import art
+
+        art.forget_failures()
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE factions SET img = '/images/factions/federated-suns-100.png' WHERE id = 1")
+        conn.execute("UPDATE factions SET img = '' WHERE id = 2")
+        conn.commit()
+        png = b"\x89PNG\r\n\x1a\n" + b"logo"
+        art.get_faction_icon(conn, 1, cache=self.art_tmp.name, fetch=lambda path: png)  # pre-fill the cache
+        conn.close()
+
+        status, headers, data = self.raw("/api/faction-icon/1")
+        self.assertEqual((status, data), (200, png))
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        self.assertIn("max-age", headers["Cache-Control"])
+
+        self.assertEqual(self.raw("/api/faction-icon/2")[0], 404)  # no logo
+        self.assertEqual(self.raw("/api/faction-icon/999")[0], 404)  # no such faction
+        self.assertEqual(self.raw("/api/faction-icon/abc")[0], 404)
+        self.assertEqual(self.raw("/api/faction-icon/1", {"Host": "evil.example.com"})[0], 403)
+
+        status, meta = self.request("GET", "/api/meta")
+        by_id = {f["id"]: f for f in meta["factions"]}
+        self.assertTrue(by_id[1]["has_icon"])
+        self.assertFalse(by_id[2]["has_icon"])
+        self.assertNotIn("img", by_id[1])
+
     def test_art_path_never_appears_in_collection_json(self):
         conn = db.connect(self.db_path)
         conn.execute("UPDATE units SET art = 'Mek/Atlas.png' WHERE uuid = 'u-atlas'")

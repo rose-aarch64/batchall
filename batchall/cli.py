@@ -83,6 +83,8 @@ def cmd_catalog(args, conn):
             catalog.download(progress=lambda m: print(m, file=sys.stderr))
         counts = catalog.load(conn, args.from_dir)
         _emit({"imported": counts, "status": catalog.status(conn)})
+        print("Optional next step: python3 -m batchall art prefetch  "
+              "(downloads unit art and faction logos ahead of time)", file=sys.stderr)
     elif args.action == "status":
         _emit(catalog.status(conn))
     else:
@@ -176,10 +178,14 @@ def cmd_collection(args, conn):
 
 
 def cmd_art(args, conn):
+    """Unit artwork and faction logos. The logos are reported under their own key, beside the unit numbers."""
+    catalog.fill_missing_faction_icons(conn)
+    progress = lambda m: print(m, file=sys.stderr)  # noqa: E731
     if args.action == "status":
-        _emit(art.status(conn))
+        _emit({**art.status(conn), "faction_icons": art.faction_icon_status(conn)})
     else:
-        _emit(art.prefetch(conn, progress=lambda m: print(m, file=sys.stderr)))
+        units = art.prefetch(conn, progress=progress)
+        _emit({**units, "faction_icons": art.prefetch_faction_icons(conn, progress=progress)})
 
 
 def _resolve_box_id(conn, args):
@@ -330,7 +336,7 @@ def make_parser():
     col.add_argument("--text", action="store_true", help="readable output (list)")
     col.set_defaults(func=cmd_collection)
 
-    ar = sub.add_parser("art", help="unit artwork cache")
+    ar = sub.add_parser("art", help="unit artwork and faction logo cache")
     ar.add_argument("action", choices=["status", "prefetch"])
     ar.set_defaults(func=cmd_art)
 

@@ -192,6 +192,14 @@ def get_unit_art(conn, query, body, unit_uuid):
     return RawResponse(data, content_type, cache_seconds=86400)
 
 
+def get_faction_icon(conn, query, body, faction_id):
+    found = art.get_faction_icon(conn, int(faction_id), cache=art_cache_dir)
+    if found is None:
+        raise ApiError("no logo for this faction", HTTPStatus.NOT_FOUND)
+    data, content_type = found
+    return RawResponse(data, content_type, cache_seconds=86400)
+
+
 def get_unit_detail(conn, query, body, unit_uuid):
     unit = details.get(conn, unit_uuid)
     if unit is None:
@@ -287,6 +295,7 @@ ROUTES = [
     ("GET", r"/api/box-catalog/(\d+)", get_box_detail),
     ("POST", r"/api/box-catalog/(\d+)/add", post_box_add),
     ("GET", r"/api/art/([^/]+)", get_unit_art),
+    ("GET", r"/api/faction-icon/(\d+)", get_faction_icon),
     ("GET", r"/api/units/([^/]+)", get_unit_detail),
     ("GET", r"/api/collection/(\d+)/variants", get_variants),
     ("POST", r"/api/collection/(\d+)/swap", post_swap),
@@ -439,8 +448,13 @@ def make_server(port=config.DEFAULT_PORT, host="127.0.0.1", db_path=None, art_di
 
 
 def serve(port=config.DEFAULT_PORT, host="127.0.0.1", db_path=None, art_dir=None):
+    conn = db.connect(db_path)
+    try:
+        catalog.fill_missing_faction_icons(conn)  # databases from before logos were stored get them without a re-import
+    finally:
+        conn.close()
     server = make_server(port, host, db_path, art_dir)
-    print(f"BattleTech collection running at http://localhost:{server.server_address[1]}/")
+    print(f"Batchall running at http://localhost:{server.server_address[1]}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

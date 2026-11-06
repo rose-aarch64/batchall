@@ -8,11 +8,17 @@ Python 3.12 standard library only. No packages to install.
 ```
 python3 -m batchall catalog import     # downloads unit, faction and era data from MekBay (about 27 MB)
 python3 -m batchall boxes import       # builds the official box and ForcePack catalog from BattleTechWiki
+python3 -m batchall art prefetch       # optional: downloads faction logos and unit art ahead of time
 python3 -m batchall serve              # web UI at http://localhost:8765/
 ```
 
 `boxes import` needs the unit catalog first. It pauses between wiki requests and caches the pages in
 `data/box_pages/`, so running it again is fast. Use `--refresh-pages` to download them again.
+
+`art prefetch` is optional. It downloads the 73 faction logos (about 1 MB) plus the illustration for each
+unit you own, into `data/art/`. Without it the page fetches each image the first time it needs one, so a
+fresh install works either way. Run it after you have added units to your collection if you want the
+unit art too, and run `python3 -m batchall art status` to see what is still missing.
 
 The database lives in `data/batchall.db`. Set `BATCHALL_DB` to use a different file, or
 `BATCHALL_DATA_DIR` to move the whole data folder.
@@ -95,6 +101,14 @@ fix. Nothing is guessed.
 - **Artwork.** Cards show each unit's illustration, downloaded once from MekBay and cached under
   `data/art/`. Units with no art show a placeholder. `python3 -m batchall art prefetch` downloads the images
   for your whole collection ahead of time.
+- **Faction logos.** A mini painted for a faction MekBay lists, like Wolf's Dragoons or Federated Suns,
+  shows that faction's logo beside its name, on the card strip and in the table. The logo is matched on
+  the exact faction name, ignoring case, so a name MekBay does not list gets no logo and nothing is
+  guessed. The Mini faction box suggests all of MekBay's faction names, and a name picked from the
+  list gets a logo. Logos come from MekBay's main site, not the data host. They are cached under
+  `data/art/factions/` and kept out of git, since they belong to their publishers. A database from before
+  logos were stored picks up its logo paths from `data/catalog/factions.json` the next time the server
+  starts, so there is nothing to re-import.
 - **Variants.** The Variant button on a mini switches just that mini to another variant of the same
   chassis, since a plastic mini can stand for any variant. It joins the entry for that variant, which
   is created if you do not own it yet, and the other minis of the old variant stay put. For a mini

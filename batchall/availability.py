@@ -36,7 +36,7 @@ def resolve_era(conn, ref):
 
 def list_factions(conn):
     return [
-        {"id": r["id"], "name": r["name"], "group": r["grp"]}
+        {"id": r["id"], "name": r["name"], "group": r["grp"], "has_icon": bool(r["img"])}
         for r in conn.execute("SELECT * FROM factions ORDER BY grp, name")
     ]
 

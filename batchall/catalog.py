@@ -11,7 +11,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, details
+from . import art, config, details
 from .db import get_meta, set_meta
 from .kinds import classify
 
@@ -71,6 +71,39 @@ def _art_path(unit):
     return path
 
 
+def _faction_icon_path(faction):
+    """The faction's logo path on MekBay's main site, or "" when it has none or the path is not a plain one."""
+    try:
+        return art.safe_faction_icon_path(faction.get("img") if isinstance(faction, dict) else None)
+    except art.ArtError:
+        return ""
+
+
+def fill_missing_faction_icons(conn, source_dir=None):
+    """Record logo paths for factions that have none recorded yet, from the downloaded factions.json.
+
+    A database loaded before logos were stored has no paths. The app calls this when it starts so those
+    users get logos without importing the catalog again. A faction that was checked and has no logo gets
+    an empty path, so the file is not read again. Returns how many factions were filled, and does nothing
+    when the file is missing or unreadable.
+    """
+    if conn.execute("SELECT 1 FROM factions WHERE img IS NULL LIMIT 1").fetchone() is None:
+        return 0
+    path = Path(source_dir or config.CATALOG_DIR) / "factions.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        records = {f["id"]: f for f in doc["factions"]}
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0
+    missing = [r["id"] for r in conn.execute("SELECT id FROM factions WHERE img IS NULL")]
+    with conn:
+        conn.executemany(
+            "UPDATE factions SET img = ? WHERE id = ?",
+            [(_faction_icon_path(records.get(faction_id)), faction_id) for faction_id in missing],
+        )
+    return len(missing)
+
+
 def load(conn, source_dir=None):
     """Replace the catalog tables with the contents of the downloaded files."""
     src = Path(source_dir or config.CATALOG_DIR)
@@ -120,7 +153,7 @@ def load(conn, source_dir=None):
             )
         )
 
-    faction_rows = [(f["id"], f["name"], f.get("group")) for f in factions_doc["factions"]]
+    faction_rows = [(f["id"], f["name"], f.get("group"), _faction_icon_path(f)) for f in factions_doc["factions"]]
     availability_rows = []
     for f in factions_doc["factions"]:
         for era_id, mul_ids in (f.get("eras") or {}).items():
@@ -140,7 +173,7 @@ def load(conn, source_dir=None):
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             unit_rows,
         )
-        conn.executemany("INSERT INTO factions (id, name, grp) VALUES (?,?,?)", faction_rows)
+        conn.executemany("INSERT INTO factions (id, name, grp, img) VALUES (?,?,?,?)", faction_rows)
         conn.executemany(
             "INSERT INTO eras (id, name, year_from, year_to) VALUES (?,?,?,?)", era_rows
         )

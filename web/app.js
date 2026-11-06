@@ -235,7 +235,11 @@ async function loadBoxes() {
   $("tag-options").replaceChildren(...tags.map((t) => h("option", { value: t.tag }, `${t.copies} ${t.copies === 1 ? "copy" : "copies"}`)));
   const [factions, companies] = await Promise.all([api("GET", "/api/copy-factions"), api("GET", "/api/copy-companies")]);
   const options = (rows) => rows.map((r) => h("option", { value: r.value }, `${r.copies} ${r.copies === 1 ? "copy" : "copies"}`));
-  $("copy-faction-options").replaceChildren(...options(factions));
+  // Factions you have used come first with their counts. MekBay's own faction names follow, so typing
+  // "Wolf" offers "Wolf's Dragoons", and a name picked from the list gets its logo.
+  const usedFactions = new Set(factions.map((r) => r.value.toLowerCase()));
+  const known = (state.meta?.factions || []).filter((f) => !usedFactions.has(f.name.toLowerCase()));
+  $("copy-faction-options").replaceChildren(...options(factions), ...known.map((f) => h("option", { value: f.name })));
   $("copy-company-options").replaceChildren(...options(companies));
   // The usual materials are always offered. Any other the user has typed is listed after them.
   const used = await api("GET", "/api/copy-materials");
@@ -571,10 +575,24 @@ function visibleMinis(item) {
 // A mini with a note, faction or company gets a crimson strip on its card, naming what it is painted for.
 const isNamed = (mini) => Boolean(mini.note || mini.faction || mini.company);
 
+// The logo of the faction a mini is painted for. It is matched on the exact faction name from MekBay,
+// ignoring case. A name MekBay does not list, or a logo that fails to load, shows nothing.
+function factionIcon(name) {
+  const key = (name || "").trim().toLowerCase();
+  if (!key || !state.meta) return null;
+  const faction = state.meta.factions.find((f) => f.has_icon && f.name.toLowerCase() === key);
+  if (!faction) return null;
+  return h("img", {
+    class: "faction-icon", src: `/api/faction-icon/${faction.id}`, alt: "", title: faction.name, loading: "lazy",
+    onerror: (e) => e.target.remove(),
+  });
+}
+
 // What a named mini is called on its card: the company, with the faction under it. A mini that has
-// neither (it only has a note) falls back to its note.
+// neither (it only has a note) falls back to its note. The flags say which line holds the faction.
 function copyHeading(copy) {
-  if (copy.company || copy.faction) return { main: copy.company || copy.faction, sub: copy.company ? copy.faction : "" };
+  if (copy.company) return { main: copy.company, sub: copy.faction, subIsFaction: true };
+  if (copy.faction) return { main: copy.faction, sub: "", mainIsFaction: true };
   return { main: copy.note, sub: "" };
 }
 
@@ -702,7 +720,7 @@ function buildMiniRow(item, mini) {
   return h("tr", { class: isNamed(mini) ? "copy-line" : "mini-line" },
     h("td", {}, nameLink(item),
       editing ? copyEditor(item, mini)
-        : (detail || mini.tag) ? h("div", { class: "copy-label", title: mini.note || null }, detail, detail && mini.tag ? " " : null, tagPill(mini)) : null),
+        : (detail || mini.tag) ? h("div", { class: "copy-label", title: mini.note || null }, factionIcon(mini.faction), detail, detail && mini.tag ? " " : null, tagPill(mini)) : null),
     h("td", {}, kindLabel(item)),
     h("td", {}, h("input", {
       type: "text", class: "box-input", value: mini.box, "data-suggest": "box", "data-entry": item.id, autocomplete: "off",
@@ -733,7 +751,9 @@ function buildMiniCard(item, mini) {
   return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") },
     h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid) },
       artImage(item), mini.painted ? paintBadge() : null),
-    heading ? h("div", { class: "copy-strip" }, h("span", {}, heading.main), heading.sub ? h("small", {}, heading.sub) : null) : null,
+    heading ? h("div", { class: "copy-strip" },
+      h("span", {}, heading.mainIsFaction ? factionIcon(mini.faction) : null, heading.main),
+      heading.sub ? h("small", {}, heading.subIsFaction ? factionIcon(mini.faction) : null, heading.sub) : null) : null,
     h("div", { class: "card-body" },
       h("div", { class: "card-name" }, nameLink(item)),
       h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),

@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS unit_details (
     lore TEXT NOT NULL DEFAULT '{}'
 );
 
-CREATE TABLE IF NOT EXISTS factions (id INTEGER PRIMARY KEY, name TEXT NOT NULL, grp TEXT);
+CREATE TABLE IF NOT EXISTS factions (id INTEGER PRIMARY KEY, name TEXT NOT NULL, grp TEXT, img TEXT);
 CREATE TABLE IF NOT EXISTS eras (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, year_from INTEGER, year_to INTEGER
 );
@@ -192,6 +192,10 @@ def _migrate(conn):
     if "art" not in columns:  # filled in by the next `catalog import`
         with conn:
             conn.execute("ALTER TABLE units ADD COLUMN art TEXT")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(factions)")}
+    if "img" not in columns:  # NULL until `catalog import` or the app's start-up fills it from factions.json
+        with conn:
+            conn.execute("ALTER TABLE factions ADD COLUMN img TEXT")
     _add_plain_mini_rows(conn)
 
 

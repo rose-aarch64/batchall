@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from . import availability, formations
 from .catalog import unit_dict
 from .collection import COLLECTION_SELECT, _row
+from .collection import get as get_entry
 from .kinds import KINDS
 
 
@@ -366,6 +367,79 @@ def _without_one_used(pool, rng, builds):
     return trimmed
 
 
+def _included_entries(conn, include, final_size):
+    """Owned entries that must be in the build, as ``[(entry, count)]``.
+
+    An id listed twice asks for two copies. Faction, era, tech base, box and kind filters do not
+    apply to them, because naming a mini is an explicit choice.
+    """
+    counts = {}
+    for cid in include or []:
+        counts[int(cid)] = counts.get(int(cid), 0) + 1
+    found = []
+    for cid, n in counts.items():
+        entry = get_entry(conn, cid)
+        if n > entry["qty"]:
+            raise BuildError(f"{entry['name']} (id {cid}) is included {n} times but you own {entry['qty']}")
+        found.append((entry, n))
+    if sum(n for _, n in found) > final_size:
+        raise BuildError(f"{sum(n for _, n in found)} included units do not fit in {final_size} slots")
+    return found
+
+
+def _mix_after_includes(mix, found):
+    """The mix bounds left for the search once the included units have taken their slots."""
+    taken = {}
+    for entry, n in found:
+        taken[entry["kind"]] = taken.get(entry["kind"], 0) + n
+    left = dict(mix)
+    for kind, n in taken.items():
+        lo, hi = left.get(kind, (0, None))
+        if hi is not None and hi < n:
+            raise BuildError(f"the mix allows at most {hi} {kind}, but {n} are included")
+        left[kind] = (max(0, lo - n), None if hi is None else hi - n)
+    return left
+
+
+def _with_includes(result, found, target_bv, size, slack_pct):
+    """Add the included units to a finished search result and restate its totals."""
+    by_key = {(u["collection_id"], u["name"]): u for u in result["units"]}
+    composition = dict(result["composition"])
+    added_bv = 0
+    for entry, n in found:
+        added_bv += entry["bv"] * n
+        composition[entry["kind"]] = composition.get(entry["kind"], 0) + n
+        row = by_key.get((entry["id"], entry["name"]))
+        if row is None:
+            row = {
+                "collection_id": entry["id"],
+                "qty": 0,
+                "name": entry["name"],
+                "kind": entry["kind"],
+                "tons": entry["tons"],
+                "bv": entry["bv"],
+                "role": entry["role"],
+                "tech_base": entry["tech_base"],
+                "box": entry["box"],
+                "weight": 1.0,
+            }
+            result["units"].append(row)
+            by_key[(entry["id"], entry["name"])] = row
+        row["qty"] += n
+        row["included"] = row.get("included", 0) + n
+    result["units"].sort(key=lambda x: (KINDS.index(x["kind"]), -x["bv"], x["name"]))
+    total = result["total_bv"] + added_bv
+    result.update(
+        target_bv=target_bv,
+        total_bv=total,
+        gap=target_bv - total,
+        size=size,
+        in_window=total >= math.ceil(target_bv * (1 - slack_pct / 100.0)),
+        composition=composition,
+    )
+    return result
+
+
 def build(
     conn,
     target_bv,
@@ -384,11 +458,17 @@ def build(
     seed=None,
     box=None,
     proxy=False,
+    include=None,
 ):
     """Build one or more distinct forces from the collection. Returns a result dict.
 
     ``proxy`` lets every owned mini stand in for any variant of its chassis. A unit that
     does is reported under the variant it fields as, with ``owned_as`` naming the mini.
+
+    ``include`` is a list of collection ids that must be in every build (an id listed twice
+    asks for two copies). They count toward the size, the mix and the BV target, and ignore
+    the faction, era, tech base, box and painted filters. They are always fielded as the
+    variant owned, even with ``proxy``.
     """
     fm = formations.get_formation(formation) if formation else None
     final_size = size if size else (fm.size if fm else None)
@@ -396,6 +476,15 @@ def build(
         raise BuildError("give a formation or a size")
     base_mix = dict(fm.mix) if fm and not size else {}
     final_mix = formations.merge_mix(base_mix, mix)
+
+    found = _included_entries(conn, include, int(final_size))
+    included_bv = sum(entry["bv"] * n for entry, n in found)
+    included_count = sum(n for _, n in found)
+    if included_bv > int(target_bv):
+        raise BuildError(f"the included units cost {included_bv} BV, over the {int(target_bv)} target")
+    search_mix = _mix_after_includes(final_mix, found) if found else final_mix
+    search_size = int(final_size) - included_count
+    search_target = int(target_bv) - included_bv
 
     pool, info = make_pool(
         conn,
@@ -409,6 +498,30 @@ def build(
         box=box,
         proxy=proxy,
     )
+    if found:  # the included minis are spoken for, so the search cannot use them again
+        taken = {entry["id"]: n for entry, n in found}
+        pool = [
+            PoolItem(p.collection_id, p.unit, p.copies - taken.get(p.collection_id, 0), p.weight, p.options)
+            for p in pool
+        ]
+        pool = [p for p in pool if p.copies > 0]
+        info["pool_units"] = len(pool)
+        info["pool_models"] = sum(p.copies for p in pool)
+        info["included"] = [
+            {"collection_id": entry["id"], "name": entry["name"], "qty": n} for entry, n in found
+        ]
+    if search_size == 0:
+        build_result = {
+            "target_bv": int(target_bv), "total_bv": 0, "gap": 0, "size": 0, "in_window": True,
+            "slack_pct": slack_pct, "composition": {}, "units": [], "seed": seed or 0,
+        }
+        return {
+            "formation": fm.key if fm else None,
+            "size": int(final_size),
+            "mix": {k: list(v) for k, v in final_mix.items()},
+            "pool": info,
+            "builds": [_with_includes(build_result, found, int(target_bv), int(final_size), slack_pct)],
+        }
     if not pool:
         raise BuildError("no usable units in the collection for these filters")
 
@@ -425,9 +538,9 @@ def build(
         try:
             result = build_once(
                 trial_pool,
-                int(target_bv),
-                int(final_size),
-                final_mix,
+                search_target,
+                search_size,
+                search_mix,
                 slack_pct,
                 base_seed + attempt,
                 theme_first,
@@ -442,6 +555,9 @@ def build(
         seen.add(fingerprint)
         result["seed"] = base_seed + attempt
         builds.append(result)
+
+    if found:  # restate each search result as a whole force: included units, full size, real target
+        builds = [_with_includes(b, found, int(target_bv), int(final_size), slack_pct) for b in builds]
 
     return {
         "formation": fm.key if fm else None,

@@ -70,6 +70,9 @@ def _render_build(result):
         )
         for u in b["units"]:
             proxied = f"  (your {u['owned_as']})" if u.get("owned_as") else ""
+            kept = u.get("included", 0)
+            if kept:
+                proxied += "  (included)" if kept == u["qty"] else f"  ({kept} included)"
             lines.append("  " + _unit_line(u) + proxied + f"  id {u['collection_id']}")
     if pool["excluded_unknown_availability"]:
         lines.append("")
@@ -272,6 +275,7 @@ def cmd_build(args, conn):
         seed=args.seed,
         box=args.box,
         proxy=args.proxy,
+        include=_csv_ints(args.include),
     )
     if args.text:
         print(_render_build(result))
@@ -403,6 +407,10 @@ def make_parser():
     b.add_argument("--box", help="only use units whose box label contains this text")
     b.add_argument("--weights", help="JSON {collection_id: weight} or @file; higher is favored")
     b.add_argument("--exclude", help="comma-separated collection ids to leave out")
+    b.add_argument(
+        "--include",
+        help="comma-separated collection ids that must be in the build; repeat an id for more copies",
+    )
     b.add_argument("--kinds", help="comma-separated kinds allowed in the pool")
     b.add_argument("--slack", type=float, default=3.0, help="percent below target a build may land")
     b.add_argument("--variants", type=int, default=1)

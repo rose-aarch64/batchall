@@ -889,6 +889,13 @@ function totals(list, scope = null) {
   return sums;
 }
 
+// "6 minis" when every entry holds one mini, else "3 entries · 5 minis". Each mini is its own item now, so
+// the entry count only says something when it differs from the mini count.
+function countText(entries, minis) {
+  const minisText = `${minis} ${minis === 1 ? "mini" : "minis"}`;
+  return entries === minis ? minisText : `${entries} ${entries === 1 ? "entry" : "entries"} · ${minisText}`;
+}
+
 function groupHeader(name, list, collapsed) {
   const t = totals(list, groupScope(name));
   const pct = t.models ? Math.round((100 * t.painted) / t.models) : 0;
@@ -900,7 +907,7 @@ function groupHeader(name, list, collapsed) {
   return h("button", { class: "group-toggle", "aria-expanded": String(!collapsed), onclick: toggle },
     h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"), " ",
     h("strong", {}, name), " ",
-    h("span", { class: "group-meta" }, `${list.length} entries · ${t.models} models · ${t.bv.toLocaleString()} BV`), " ",
+    h("span", { class: "group-meta" }, `${countText(list.length, t.models)} · ${t.bv.toLocaleString()} BV`), " ",
     h("span", { class: "bar", "aria-hidden": "true", title: `${t.painted} of ${t.models} painted` },
       h("i", { style: `width:${pct}%` })), " ",
     h("span", { class: "group-meta" }, `${t.painted}/${t.models} painted`));
@@ -1002,7 +1009,7 @@ function syncViewControls() {
   const current = Object.entries(SORT_CHOICES).find(([, v]) => v && v.key === state.sort.key);
   $("card-sort").value = current ? current[0] : "";
   const models = state.items.reduce((n, i) => n + i.qty, 0);
-  $("view-count").textContent = `${state.items.length} entries · ${models} models`;
+  $("view-count").textContent = countText(state.items.length, models);
 }
 
 function renderRoster() {

@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 from support import seed_catalog  # noqa: E402
 
-from batchall import db, multiuser  # noqa: E402
+from batchall import config, db, multiuser  # noqa: E402
+from hosted import accounts  # noqa: E402
 
 User = get_user_model()
 PASSWORD = "correct horse battery"
@@ -84,6 +85,79 @@ class AdoptCommandTests(TestCase):
         again = self.run_adopt(handle="someone")
         self.assertIn("already adopted", again)
         self.assertEqual(User.objects.count(), 1)
+
+    def test_interrupt_leaves_no_user_and_a_rerun_succeeds(self):
+        with mock.patch.object(multiuser, "adopt_data", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_adopt()
+        self.assertEqual(User.objects.count(), 0)
+        self.run_adopt()
+        self.assertEqual(User.objects.count(), 1)
+        self.assertTrue(db.is_multiuser(self.path))
+
+    def test_interrupt_after_the_drop_commit_keeps_the_user_and_the_data(self):
+        real_drop = multiuser._drop_user_tables
+
+        def drop_then_interrupt(*args):
+            real_drop(*args)
+            raise KeyboardInterrupt
+
+        with mock.patch.object(multiuser, "_drop_user_tables", drop_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_adopt()
+        user = User.objects.get(username="rose")
+        self.assertTrue(db.is_multiuser(self.path))
+        conn = db.connect_user(user.id, self.path)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM collection").fetchone()[0], 2)
+
+    def test_adopt_resumes_with_a_superuser_left_by_a_killed_run(self):
+        left = accounts.create_user("rose", PASSWORD, superuser=True)
+        self.run_adopt()
+        self.assertEqual(User.objects.count(), 1)
+        conn = db.connect_user(left.id, self.path)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM collection").fetchone()[0], 2)
+
+    def test_adopt_refuses_an_existing_handle_with_another_password(self):
+        accounts.create_user("rose", "some other passphrase", superuser=True)
+        with self.assertRaises(CommandError):
+            self.run_adopt()
+        self.assertFalse(db.is_multiuser(self.path))
+
+    def test_adopt_refuses_an_existing_ordinary_user(self):
+        accounts.create_user("rose", PASSWORD)
+        with self.assertRaises(CommandError):
+            self.run_adopt()
+        self.assertFalse(db.is_multiuser(self.path))
+
+    def test_a_failed_resume_keeps_the_existing_superuser(self):
+        accounts.create_user("rose", PASSWORD, superuser=True)
+        with mock.patch.object(multiuser, "adopt_data", side_effect=ValueError("boom")):
+            with self.assertRaises(CommandError):
+                self.run_adopt()
+        self.assertEqual(User.objects.count(), 1)
+
+    def test_adopt_refuses_a_missing_database_and_creates_nothing(self):
+        missing = Path(self._tmp.name) / "typo" / "batchall.db"
+        with override_settings(BATCHALL_SHARED_DB=str(missing)):
+            with self.assertRaises(CommandError) as caught:
+                self.run_adopt()
+        self.assertIn(str(missing), str(caught.exception))
+        self.assertEqual(User.objects.count(), 0)
+        self.assertFalse(missing.exists())
+
+    def test_adopt_accepts_a_missing_default_file_when_the_old_one_exists(self):
+        fresh = Path(self._tmp.name) / "fresh"
+        fresh.mkdir()
+        target = fresh / "batchall.db"
+        legacy = fresh / "battletech.db"
+        self.path.replace(legacy)
+        with override_settings(BATCHALL_SHARED_DB=str(target)), mock.patch.multiple(
+            config, DB_IS_DEFAULT=True, DB_PATH=target, LEGACY_DB_PATH=legacy
+        ):
+            result = json.loads(self.run_adopt())
+        self.assertEqual(result["counts"]["collection"], 2)
 
     def test_adopt_prompts_twice_without_an_environment_variable(self):
         out = StringIO()

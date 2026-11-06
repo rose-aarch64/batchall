@@ -6,7 +6,7 @@ from unittest import mock
 
 import support
 
-from batchall import db, multiuser
+from batchall import config, db, multiuser
 
 PHOTO = bytes(range(256)) * 8  # 2 KB
 
@@ -177,6 +177,110 @@ class AdoptDataTests(unittest.TestCase):
         self.addCleanup(user.close)
         self.assertEqual(self.counts(user)["collection"], 2)
         self.assertEqual(user.execute("SELECT COUNT(*) FROM collection WHERE unit_uuid = 'u-junk'").fetchone()[0], 0)
+
+    def test_interrupt_after_the_drop_commit_keeps_the_user_file(self):
+        self.build().close()
+        real_drop = multiuser._drop_user_tables
+
+        def drop_then_interrupt(*args):
+            real_drop(*args)
+            raise KeyboardInterrupt
+
+        with mock.patch.object(multiuser, "_drop_user_tables", drop_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                multiuser.adopt_data(self.path, 5)
+        self.assertTrue(db.is_multiuser(self.path))
+        target = db.user_db_path(self.path, 5)
+        self.assertTrue(target.is_file())
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        self.assertEqual(self.counts(user), {t: n for t, n in zip(db.USER_TABLES, (2, 3, 1, 1, 2, 1, 1))})
+        again = multiuser.adopt_data(self.path, 5)
+        self.assertTrue(again["already"])
+        self.assertEqual(again["counts"]["collection"], 2)
+        self.assertNotIn("user_file_missing", again)
+
+    def test_interrupt_before_the_drop_removes_the_partial_user_file(self):
+        self.build().close()
+        with mock.patch.object(multiuser, "_drop_user_tables", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                multiuser.adopt_data(self.path, 5)
+        self.assertFalse(db.is_multiuser(self.path))
+        self.assertFalse(db.user_db_path(self.path, 5).exists())
+        self.assertTrue(multiuser.adopt_data(self.path, 5)["counts"]["collection"] == 2)
+
+    def test_already_reports_counts_from_the_user_file(self):
+        self.build().close()
+        first = multiuser.adopt_data(self.path, 5)
+        self.assertEqual(multiuser.adopt_data(self.path, 5)["counts"], first["counts"])
+
+    def test_already_flags_a_missing_user_file(self):
+        self.build().close()
+        multiuser.adopt_data(self.path, 5)
+        db.user_db_path(self.path, 5).unlink()
+        again = multiuser.adopt_data(self.path, 5)
+        self.assertTrue(again["already"])
+        self.assertTrue(again["user_file_missing"])
+        self.assertEqual(again["counts"], {})
+
+    def test_shared_file_is_write_locked_during_the_copy(self):
+        self.build().close()
+        real_copy = multiuser._copy_user_tables
+        outcome = {}
+
+        def copy_while_another_writer_tries(path, user_id):
+            other = sqlite3.connect(path, timeout=0.2)
+            try:
+                other.execute("UPDATE copies SET note = 'edited during copy' WHERE id = 4")
+                other.commit()
+                outcome["wrote"] = True
+            except sqlite3.OperationalError as exc:
+                outcome["error"] = str(exc)
+            finally:
+                other.close()
+            return real_copy(path, user_id)
+
+        with mock.patch.object(multiuser, "_copy_user_tables", copy_while_another_writer_tries):
+            multiuser.adopt_data(self.path, 5)
+        self.assertNotIn("wrote", outcome)
+        self.assertIn("locked", outcome["error"])
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        self.assertEqual(user.execute("SELECT note FROM copies WHERE id = 4").fetchone()[0], "Big Bertha")
+
+    def test_the_lock_is_released_after_a_failure(self):
+        self.build().close()
+        with mock.patch.object(multiuser, "_mismatches", return_value=["collection"]):
+            with self.assertRaises(ValueError):
+                multiuser.adopt_data(self.path, 5)
+        other = sqlite3.connect(self.path, timeout=0.2)
+        self.addCleanup(other.close)
+        with other:
+            other.execute("UPDATE copies SET note = 'after' WHERE id = 4")
+
+    def test_an_edit_made_before_adopt_is_in_the_user_file(self):
+        conn = self.build()
+        with conn:
+            conn.execute("UPDATE copies SET note = 'renamed' WHERE id = 4")
+        conn.close()
+        multiuser.adopt_data(self.path, 5)
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        self.assertEqual(user.execute("SELECT note FROM copies WHERE id = 4").fetchone()[0], "renamed")
+
+    def test_the_default_path_picks_up_the_pre_rename_database(self):
+        legacy = Path(self._tmp.name) / "battletech.db"
+        conn = sqlite3.connect(legacy)
+        conn.executescript(db.SCHEMA)
+        conn.execute("INSERT INTO collection (unit_uuid, qty) VALUES ('u-atlas', 1)")
+        conn.commit()
+        conn.close()
+        with mock.patch.multiple(
+            config, DB_IS_DEFAULT=True, DB_PATH=self.path, LEGACY_DB_PATH=legacy
+        ):
+            result = multiuser.adopt_data(self.path, 5)
+        self.assertEqual(result["counts"]["collection"], 1)
+        self.assertTrue(legacy.is_file())
 
     def test_finished_adoption_never_deletes_the_user_file(self):
         self.build().close()

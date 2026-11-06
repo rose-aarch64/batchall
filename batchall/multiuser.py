@@ -10,7 +10,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from . import db
+from . import config, db
 
 BACKUP_SUFFIX = ".pre-multiuser"
 
@@ -25,20 +25,48 @@ def adopt_data(path, user_id):
     path = Path(path)
     user_id = int(user_id)
     if db.is_multiuser(path):
-        return {"already": True, "user_id": user_id, "counts": _existing_counts(path, user_id), "backup": None}
+        return _already(path, user_id)
 
-    db.connect(path).close()  # upgrades an old-schema file
-    backup = _backup(path)
+    if config.DB_IS_DEFAULT and path == Path(config.DB_PATH):
+        db.connect().close()  # also copies the pre-rename database when only that exists
+    else:
+        db.connect(path).close()  # upgrades an old-schema file
 
     target = db.user_db_path(path, user_id)
-    _remove_user_file(target)
+    # Hold the shared file's write lock from before the copy until the tables are dropped, so no
+    # edit can land between what was copied and what is removed. Readers are not blocked.
+    lock = sqlite3.connect(path, isolation_level=None, timeout=30)
+    lock.row_factory = sqlite3.Row
     try:
-        counts = _copy_user_tables(path, user_id)
-        _drop_user_tables(path, counts)
-    except BaseException:
-        _remove_user_file(target)
-        raise
+        lock.execute("PRAGMA foreign_keys = OFF")
+        lock.execute("BEGIN IMMEDIATE")
+        try:
+            if db.get_meta(lock, "multiuser") == "1":  # another run finished while this one waited
+                lock.execute("ROLLBACK")
+                return _already(path, user_id)
+            backup = _backup(path)
+            _remove_user_file(target)
+            counts = _copy_user_tables(path, user_id)
+            _drop_user_tables(lock, counts)
+        except BaseException:
+            # Judge by the committed state: once the drop has committed, the user file is the only
+            # copy of the data and must stay.
+            if _unadopted(path):
+                _remove_user_file(target)
+            if lock.in_transaction:
+                lock.execute("ROLLBACK")
+            raise
+    finally:
+        lock.close()
     return {"already": False, "user_id": user_id, "counts": counts, "backup": str(backup)}
+
+
+def _already(path, user_id):
+    counts = _existing_counts(path, user_id)
+    result = {"already": True, "user_id": user_id, "counts": counts, "backup": None}
+    if not db.user_db_path(path, user_id).is_file():
+        result["user_file_missing"] = True
+    return result
 
 
 def _backup(path):
@@ -89,9 +117,14 @@ def _mismatches(source_counts, copied_counts):
 
 def _copy_user_tables(path, user_id):
     """Copy every user table into the user's file. Returns the verified row counts."""
-    conn = db.connect_user(user_id, path)  # creates the user schema, attaches the shared file
-    conn.isolation_level = None
+    target = db.user_db_path(path, user_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(target, isolation_level=None)
+    conn.row_factory = sqlite3.Row
     try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.executescript(db.USER_SCHEMA)
+        conn.execute("ATTACH DATABASE ? AS shared", (str(Path(path).resolve()),))
         conn.execute("BEGIN")
         source = {}
         for table in db.USER_TABLES:
@@ -132,24 +165,29 @@ def _copy_sequences(conn):
             conn.execute("INSERT INTO main.sqlite_sequence (name, seq) VALUES (?, ?)", (table, seq))
 
 
-def _drop_user_tables(path, expected_counts):
-    """Remove the user tables from the shared file and mark it multi-user, in one transaction."""
-    conn = sqlite3.connect(path, isolation_level=None)
-    conn.row_factory = sqlite3.Row
+def _drop_user_tables(lock, expected_counts):
+    """Remove the user tables and mark the file multi-user, then commit the lock's transaction.
+
+    ``lock`` is the connection that has held ``BEGIN IMMEDIATE`` on the shared file since before the
+    copy, so the drops and the marker are one transaction. The row-count check is a backstop.
+    """
+    now = {t: lock.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0] for t in db.USER_TABLES}
+    if now != expected_counts:
+        raise ValueError("the database changed while it was being copied; run adopt again")
+    for table in reversed(db.USER_TABLES):
+        lock.execute(f'DROP TABLE "{table}"')
+    db.set_meta(lock, "multiuser", 1)
+    lock.execute("COMMIT")
+
+
+def _unadopted(path):
+    """True while the committed shared file still has the user tables and no multi-user marker."""
+    if db.is_multiuser(path):
+        return False
+    conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
     try:
-        conn.execute("PRAGMA foreign_keys = OFF")
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            now = {t: conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0] for t in db.USER_TABLES}
-            if now != expected_counts:
-                raise ValueError("the database changed while it was being copied; run adopt again")
-            for table in reversed(db.USER_TABLES):
-                conn.execute(f'DROP TABLE "{table}"')
-            db.set_meta(conn, "multiuser", 1)
-            conn.execute("COMMIT")
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'collection'"
+        ).fetchone() is not None
     finally:
         conn.close()

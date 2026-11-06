@@ -1,0 +1,191 @@
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import support
+
+from batchall import db, multiuser
+
+PHOTO = bytes(range(256)) * 8  # 2 KB
+
+
+class AdoptDataTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "batchall.db"
+
+    def build(self, populate=True):
+        conn = db.connect(self.path)
+        support.seed_catalog(conn)
+        if populate:
+            with conn:
+                conn.execute("INSERT INTO collection (id, unit_uuid, qty, painted) VALUES (3, 'u-atlas', 2, 1)")
+                conn.execute("INSERT INTO collection (id, unit_uuid, qty) VALUES (9, 'u-locust', 1)")
+                conn.execute("INSERT INTO copies (id, collection_id, note, tag, painted) VALUES (4, 3, 'Big Bertha', 'a', 1)")
+                conn.execute("INSERT INTO copies (id, collection_id, note) VALUES (8, 3, '')")
+                conn.execute("INSERT INTO copies (id, collection_id, note) VALUES (12, 9, 'Zippy')")
+                conn.execute(
+                    "INSERT INTO mini_photos (copy_id, content_type, data, width, height) "
+                    "VALUES (4, 'image/jpeg', ?, 640, 480)",
+                    (PHOTO,),
+                )
+                conn.execute("INSERT INTO forces (id, name, formation) VALUES (2, 'Strike Lance', 'lance')")
+                conn.execute(
+                    "INSERT INTO force_units (force_id, collection_id, as_uuid, qty) VALUES (2, 3, 'u-shadow', 1)"
+                )
+                conn.execute("INSERT INTO force_units (force_id, collection_id, as_uuid, qty) VALUES (2, 9, '', 1)")
+                conn.execute(
+                    "INSERT INTO company_logos (key, name, content_type, data) VALUES ('wolf', 'Wolf', 'image/png', ?)",
+                    (b"png",),
+                )
+                conn.execute("INSERT INTO company_colors (key, name, color) VALUES ('wolf', 'Wolf', '#aabbcc')")
+        return conn
+
+    def counts(self, conn):
+        return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in db.USER_TABLES}
+
+    def test_adopt_preserves_every_row(self):
+        original = self.build()
+        before = self.counts(original)
+        ids = {t: [r[0] for r in original.execute(f"SELECT rowid FROM {t} ORDER BY rowid")] for t in db.USER_TABLES}
+        original.close()
+        self.assertEqual(before, {t: n for t, n in zip(db.USER_TABLES, (2, 3, 1, 1, 2, 1, 1))})
+
+        result = multiuser.adopt_data(self.path, 5)
+
+        self.assertFalse(result["already"])
+        self.assertEqual(result["user_id"], 5)
+        self.assertEqual(result["counts"], before)
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        self.assertEqual(self.counts(user), before)
+        for table in db.USER_TABLES:
+            self.assertEqual([r[0] for r in user.execute(f"SELECT rowid FROM {table} ORDER BY rowid")], ids[table])
+        self.assertEqual(user.execute("SELECT data FROM mini_photos").fetchone()[0], PHOTO)
+        self.assertEqual(
+            [r[0] for r in user.execute("SELECT as_uuid FROM force_units ORDER BY collection_id")], ["u-shadow", ""]
+        )
+        self.assertEqual(user.execute("SELECT name FROM forces").fetchone()[0], "Strike Lance")
+        self.assertEqual(user.execute("SELECT color FROM company_colors").fetchone()[0], "#aabbcc")
+        self.assertEqual(user.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_deleted_ids_are_not_reused(self):
+        conn = self.build()
+        with conn:
+            conn.execute("INSERT INTO collection (id, unit_uuid) VALUES (50, 'u-condor')")
+            conn.execute("DELETE FROM collection WHERE id = 50")
+        conn.close()
+        multiuser.adopt_data(self.path, 5)
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        with user:
+            cur = user.execute("INSERT INTO collection (unit_uuid) VALUES ('u-scorpion')")
+        self.assertEqual(cur.lastrowid, 51)
+
+    def test_adopt_makes_a_backup(self):
+        self.build().close()
+        result = multiuser.adopt_data(self.path, 5)
+        backup = sqlite3.connect(result["backup"])
+        self.addCleanup(backup.close)
+        self.assertEqual(Path(result["backup"]).name, "batchall.db.pre-multiuser")
+        self.assertEqual(backup.execute("SELECT COUNT(*) FROM collection").fetchone()[0], 2)
+
+    def test_existing_backup_name_is_not_overwritten(self):
+        self.build().close()
+        taken = self.path.with_name("batchall.db.pre-multiuser")
+        taken.write_bytes(b"keep me")
+        result = multiuser.adopt_data(self.path, 5)
+        self.assertEqual(taken.read_bytes(), b"keep me")
+        self.assertNotEqual(result["backup"], str(taken))
+        self.assertTrue(Path(result["backup"]).is_file())
+
+    def test_shared_file_loses_the_user_tables_and_refuses_connect(self):
+        self.build().close()
+        multiuser.adopt_data(self.path, 5)
+        shared = sqlite3.connect(self.path)
+        self.addCleanup(shared.close)
+        names = {r[0] for r in shared.execute("SELECT name FROM sqlite_master")}
+        for table in db.USER_TABLES:
+            self.assertNotIn(table, names)
+        self.assertGreater(shared.execute("SELECT COUNT(*) FROM units").fetchone()[0], 0)
+        with self.assertRaises(db.MultiUserDatabase):
+            db.connect(self.path)
+        self.assertTrue(db.is_multiuser(self.path))
+
+    def test_adopt_twice_changes_nothing(self):
+        self.build().close()
+        first = multiuser.adopt_data(self.path, 5)
+        second = multiuser.adopt_data(self.path, 5)
+        self.assertTrue(second["already"])
+        self.assertIsNone(second["backup"])
+        self.assertEqual(second["counts"], first["counts"])
+
+    def test_adopt_on_an_empty_database(self):
+        self.build(populate=False).close()
+        result = multiuser.adopt_data(self.path, 5)
+        self.assertEqual(result["counts"], {t: 0 for t in db.USER_TABLES})
+        self.assertTrue(db.is_multiuser(self.path))
+
+    def test_adopt_upgrades_an_old_schema_first(self):
+        conn = sqlite3.connect(self.path)
+        conn.executescript(
+            "CREATE TABLE collection (id INTEGER PRIMARY KEY AUTOINCREMENT, unit_uuid TEXT NOT NULL UNIQUE, "
+            "qty INTEGER NOT NULL DEFAULT 1, painted INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', "
+            "added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+            "INSERT INTO collection (unit_uuid, qty) VALUES ('u-atlas', 2);"
+        )
+        conn.commit()
+        conn.close()
+        result = multiuser.adopt_data(self.path, 5)
+        self.assertEqual(result["counts"]["collection"], 1)
+        self.assertEqual(result["counts"]["copies"], 2)  # plain mini rows added by the upgrade
+
+    def test_failed_verification_leaves_the_original_intact(self):
+        self.build().close()
+        with mock.patch.object(multiuser, "_mismatches", return_value=["collection"]):
+            with self.assertRaises(ValueError):
+                multiuser.adopt_data(self.path, 5)
+        self.assertFalse(db.is_multiuser(self.path))
+        self.assertFalse(db.user_db_path(self.path, 5).exists())
+        conn = db.connect(self.path)
+        self.addCleanup(conn.close)
+        self.assertEqual(self.counts(conn)["collection"], 2)
+
+    def test_crash_after_the_copy_is_recoverable(self):
+        self.build().close()
+        with mock.patch.object(multiuser, "_drop_user_tables", side_effect=RuntimeError("crash")):
+            with self.assertRaises(RuntimeError):
+                multiuser.adopt_data(self.path, 5)
+        self.assertFalse(db.is_multiuser(self.path))
+        conn = db.connect(self.path)
+        self.assertEqual(self.counts(conn)["collection"], 2)
+        conn.close()
+
+        # A leftover, partly filled user file from the crashed run must not be trusted.
+        leftover = db.connect_user(5, self.path)
+        with leftover:
+            leftover.execute("INSERT INTO collection (unit_uuid) VALUES ('u-junk')")
+        leftover.close()
+
+        result = multiuser.adopt_data(self.path, 5)
+        self.assertFalse(result["already"])
+        self.assertTrue(db.is_multiuser(self.path))
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        self.assertEqual(self.counts(user)["collection"], 2)
+        self.assertEqual(user.execute("SELECT COUNT(*) FROM collection WHERE unit_uuid = 'u-junk'").fetchone()[0], 0)
+
+    def test_finished_adoption_never_deletes_the_user_file(self):
+        self.build().close()
+        multiuser.adopt_data(self.path, 5)
+        target = db.user_db_path(self.path, 5)
+        size = target.stat().st_size
+        multiuser.adopt_data(self.path, 5)
+        self.assertEqual(target.stat().st_size, size)
+
+
+if __name__ == "__main__":
+    unittest.main()

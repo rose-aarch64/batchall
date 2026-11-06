@@ -54,6 +54,8 @@ def _render_build(result):
         scope.append(pool["era"]["name"])
     if pool["painted_only"]:
         scope.append("painted only")
+    if pool.get("proxy"):
+        scope.append("proxying variants")
     head = f"{result['formation'] or 'custom'} ({result['size']} units)"
     if scope:
         head += " | " + ", ".join(scope)
@@ -67,7 +69,8 @@ def _render_build(result):
             + ")"
         )
         for u in b["units"]:
-            lines.append("  " + _unit_line(u) + f"  id {u['collection_id']}")
+            proxied = f"  (your {u['owned_as']})" if u.get("owned_as") else ""
+            lines.append("  " + _unit_line(u) + proxied + f"  id {u['collection_id']}")
     if pool["excluded_unknown_availability"]:
         lines.append("")
         lines.append(
@@ -268,6 +271,7 @@ def cmd_build(args, conn):
         variants=args.variants,
         seed=args.seed,
         box=args.box,
+        proxy=args.proxy,
     )
     if args.text:
         print(_render_build(result))
@@ -403,6 +407,11 @@ def make_parser():
     b.add_argument("--slack", type=float, default=3.0, help="percent below target a build may land")
     b.add_argument("--variants", type=int, default=1)
     b.add_argument("--seed", type=int)
+    b.add_argument(
+        "--proxy",
+        action="store_true",
+        help="let every owned mini stand in for any variant of its chassis",
+    )
     b.add_argument("--text", action="store_true")
     b.set_defaults(func=cmd_build)
 

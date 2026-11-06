@@ -17,6 +17,7 @@ import random
 from dataclasses import dataclass
 
 from . import availability, formations
+from .catalog import unit_dict
 from .collection import COLLECTION_SELECT, _row
 from .kinds import KINDS
 
@@ -31,6 +32,11 @@ class PoolItem:
     unit: dict
     copies: int
     weight: float = 1.0
+    # With proxying, the variants one owned mini can stand in for. None means just ``unit``.
+    options: list = None
+
+    def choices(self):
+        return self.options if self.options else [self.unit]
 
 
 # --- pool ---------------------------------------------------------------------------------
@@ -46,6 +52,7 @@ def make_pool(
     exclude=None,
     kinds=None,
     box=None,
+    proxy=False,
 ):
     """Collect usable units from the collection.
 
@@ -53,6 +60,9 @@ def make_pool(
     of collection ids to leave out. ``box`` keeps only entries whose box label contains the
     text. With a faction or era filter, units whose availability is unknown (no MUL id) are
     left out and counted in the returned info.
+
+    With ``proxy``, every owned mini may stand in for any variant of its chassis and kind.
+    The tech base, faction and era filters apply to each variant instead of the owned one.
     """
     box = (box or "").strip().lower()
     faction_row = availability.resolve_faction(conn, faction)
@@ -74,18 +84,45 @@ def make_pool(
             continue
         if box and box not in entry["box"].lower():
             continue
-        if tech_base and entry["tech_base"] != tech_base:
-            continue
-        if allowed is not None:
-            if entry["mul_id"] is None:
-                unknown_availability += 1
-                continue
-            if entry["mul_id"] not in allowed:
-                continue
         copies = entry["painted"] if painted_only else entry["qty"]
         if copies <= 0:
             continue
-        pool.append(PoolItem(entry["id"], entry, copies, weights.get(entry["id"], 1.0)))
+        candidates = [entry]
+        if proxy:
+            candidates = [
+                {**unit_dict(v), "box": entry["box"]}
+                for v in conn.execute(
+                    "SELECT * FROM units WHERE chassis = ? AND kind = ? ORDER BY model",
+                    (entry["chassis"], entry["kind"]),
+                )
+            ]
+        usable = []
+        for cand in candidates:
+            if tech_base and cand["tech_base"] != tech_base:
+                continue
+            if allowed is not None:
+                if cand["mul_id"] is None:
+                    if not proxy:  # a proxy mini only counts when it has no variant left at all
+                        unknown_availability += 1
+                    continue
+                if cand["mul_id"] not in allowed:
+                    continue
+            usable.append(cand)
+        if not usable:
+            continue
+        if proxy:
+            # Variants with the same BV are interchangeable to the search. Keep one per BV, and
+            # keep the owned variant over a look-alike so it is not reported as a stand-in.
+            usable.sort(key=lambda c: c["uuid"] != entry["unit_uuid"])
+            by_bv = {}
+            for cand in usable:
+                by_bv.setdefault(cand["bv"], cand)
+            usable = sorted(by_bv.values(), key=lambda c: (c["bv"], c["name"]))
+        pool.append(
+            PoolItem(
+                entry["id"], entry, copies, weights.get(entry["id"], 1.0), usable if proxy else None
+            )
+        )
 
     info = {
         "faction": faction_row,
@@ -93,6 +130,7 @@ def make_pool(
         "tech_base": tech_base,
         "box": box or None,
         "painted_only": bool(painted_only),
+        "proxy": bool(proxy),
         "excluded_unknown_availability": unknown_availability,
         "pool_units": len(pool),
         "pool_models": sum(p.copies for p in pool),
@@ -106,23 +144,60 @@ def make_pool(
 def _kind_tables(items, weights, max_count, target):
     """tables[c] maps total BV to (score, node) for the best c-item subset of ``items``.
 
-    ``node`` is a linked list ``(item_index, parent_node)`` so subsets can be rebuilt.
+    ``node`` is a linked list ``((item_index, option_index), parent_node)`` so subsets can be
+    rebuilt. An item with several options (a proxy mini) is used at most once, as one option:
+    every option reads the tables as they were before this item, because counts go downward
+    and ``tables[c]`` is not written until the pass for ``c - 1``.
     """
     tables = [{0: (0.0, None)}] + [{} for _ in range(max_count)]
     for idx, item in enumerate(items):
-        bv = item.unit["bv"]
         w = weights[idx]
+        choices = item.choices()
         for c in range(max_count - 1, -1, -1):
             src, dst = tables[c], tables[c + 1]
-            for total, (score, node) in src.items():
-                new_total = total + bv
-                if new_total > target:
-                    continue
-                cand = score + w
-                cur = dst.get(new_total)
-                if cur is None or cand > cur[0]:
-                    dst[new_total] = (cand, (idx, node))
+            for opt, unit in enumerate(choices):
+                bv = unit["bv"]
+                for total, (score, node) in src.items():
+                    new_total = total + bv
+                    if new_total > target:
+                        continue
+                    cand = score + w
+                    cur = dst.get(new_total)
+                    if cur is None or cand > cur[0]:
+                        dst[new_total] = (cand, ((idx, opt), node))
     return tables
+
+
+COARSE_FROM_BV = 10_000  # proxy builds at or above this target group totals into buckets
+COARSE_BUCKETS = 2_500  # about this many totals are kept apart per count
+
+
+def _kind_tables_coarse(items, weights, max_count, target, grain):
+    """Like ``_kind_tables`` but keeps one subset per ``grain`` BV of total.
+
+    Mini variants multiply the number of reachable totals, which makes an exact search over a
+    big target slow. Here a bucket keeps the best-scoring subset that reached it. Each subset's
+    total is still exact and never above ``target``; only near-equal alternatives are dropped.
+    The result is keyed by exact total, like ``_kind_tables``.
+    """
+    tables = [{0: (0.0, 0, None)}] + [{} for _ in range(max_count)]
+    for idx, item in enumerate(items):
+        w = weights[idx]
+        choices = item.choices()
+        for c in range(max_count - 1, -1, -1):
+            src, dst = tables[c], tables[c + 1]
+            for opt, unit in enumerate(choices):
+                bv = unit["bv"]
+                for score, total, node in src.values():
+                    new_total = total + bv
+                    if new_total > target:
+                        continue
+                    cand = score + w
+                    key = new_total // grain
+                    cur = dst.get(key)
+                    if cur is None or (cand, new_total) > (cur[0], cur[1]):
+                        dst[key] = (cand, new_total, ((idx, opt), node))
+    return [{total: (score, node) for score, total, node in t.values()} for t in tables]
 
 
 def _merge(left, right, kind_index, target):
@@ -201,8 +276,15 @@ def build_once(pool, target_bv, size, mix=None, slack_pct=3.0, seed=None, theme_
         kind: [item.weight + rng.random() * 1e-3 for item in by_kind[kind]] for kind in KINDS
     }
     max_needed = {kind: max(c.get(kind, 0) for c in compositions) for kind in KINDS}
+    grain = 1
+    if target_bv >= COARSE_FROM_BV and any(item.options for item in pool):
+        grain = max(1, target_bv // COARSE_BUCKETS)
     tables = {
-        kind: _kind_tables(by_kind[kind], weights[kind], max_needed[kind], target_bv)
+        kind: (
+            _kind_tables(by_kind[kind], weights[kind], max_needed[kind], target_bv)
+            if grain == 1
+            else _kind_tables_coarse(by_kind[kind], weights[kind], max_needed[kind], target_bv, grain)
+        )
         for kind in KINDS
         if max_needed[kind] > 0
     }
@@ -235,27 +317,30 @@ def build_once(pool, target_bv, size, mix=None, slack_pct=3.0, seed=None, theme_
     for kind_index, node in picks:
         kind = kind_order[kind_index]
         while node is not None:
-            idx, node = node
+            (idx, opt), node = node
             item = by_kind[kind][idx]
-            chosen[item.collection_id] = chosen.get(item.collection_id, 0) + 1
+            key = (item.collection_id, opt)
+            chosen[key] = chosen.get(key, 0) + 1
     by_id = {p.collection_id: p for p in pool}
     units = []
-    for cid, qty in chosen.items():
-        u = by_id[cid].unit
-        units.append(
-            {
-                "collection_id": cid,
-                "qty": qty,
-                "name": u["name"],
-                "kind": u["kind"],
-                "tons": u["tons"],
-                "bv": u["bv"],
-                "role": u["role"],
-                "tech_base": u["tech_base"],
-                "box": u["box"],
-                "weight": by_id[cid].weight,
-            }
-        )
+    for (cid, opt), qty in chosen.items():
+        owned = by_id[cid].unit
+        u = by_id[cid].choices()[opt]
+        entry = {
+            "collection_id": cid,
+            "qty": qty,
+            "name": u["name"],
+            "kind": u["kind"],
+            "tons": u["tons"],
+            "bv": u["bv"],
+            "role": u["role"],
+            "tech_base": u["tech_base"],
+            "box": u["box"],
+            "weight": by_id[cid].weight,
+        }
+        if u["name"] != owned["name"]:
+            entry["owned_as"] = owned["name"]  # the mini on the shelf, standing in for this variant
+        units.append(entry)
     units.sort(key=lambda x: (KINDS.index(x["kind"]), -x["bv"], x["name"]))
     return {
         "target_bv": target_bv,
@@ -277,7 +362,7 @@ def _without_one_used(pool, rng, builds):
     for item in pool:
         copies = item.copies - 1 if item.collection_id == victim else item.copies
         if copies > 0:
-            trimmed.append(PoolItem(item.collection_id, item.unit, copies, item.weight))
+            trimmed.append(PoolItem(item.collection_id, item.unit, copies, item.weight, item.options))
     return trimmed
 
 
@@ -298,8 +383,13 @@ def build(
     variants=1,
     seed=None,
     box=None,
+    proxy=False,
 ):
-    """Build one or more distinct forces from the collection. Returns a result dict."""
+    """Build one or more distinct forces from the collection. Returns a result dict.
+
+    ``proxy`` lets every owned mini stand in for any variant of its chassis. A unit that
+    does is reported under the variant it fields as, with ``owned_as`` naming the mini.
+    """
     fm = formations.get_formation(formation) if formation else None
     final_size = size if size else (fm.size if fm else None)
     if not final_size:
@@ -317,6 +407,7 @@ def build(
         exclude=exclude,
         kinds=kinds,
         box=box,
+        proxy=proxy,
     )
     if not pool:
         raise BuildError("no usable units in the collection for these filters")
@@ -345,7 +436,7 @@ def build(
             if not builds:
                 raise
             continue
-        fingerprint = tuple(sorted((u["collection_id"], u["qty"]) for u in result["units"]))
+        fingerprint = tuple(sorted((u["collection_id"], u["name"], u["qty"]) for u in result["units"]))
         if fingerprint in seen:
             continue
         seen.add(fingerprint)

@@ -4,6 +4,8 @@ from django.urls import path, re_path
 from hosted import api as api_module
 from hosted import authviews, pages
 
+handler400 = "hosted.api.bad_request"
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/auth/signup", authviews.signup),

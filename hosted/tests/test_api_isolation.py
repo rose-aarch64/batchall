@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from django.conf import settings
 from django.test import Client, TestCase, override_settings
@@ -13,7 +14,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 from support import seed_catalog  # noqa: E402
 
-from batchall import collection, colors, db, forces, logos, photos, server  # noqa: E402
+from batchall import collection, colors, copies, db, forces, logos, photos, server  # noqa: E402
 from hosted import accounts  # noqa: E402
 
 PASSWORD = "correct horse battery"
@@ -56,6 +57,7 @@ class ApiIsolationTests(TestCase):
             )
             logos.save(conn, "Alice Co", "https://sarna.net/wiki/images/a.png", fetch=lambda url: PNG)
             colors.save(conn, "Alice Co", "#112233")
+            copies.update(conn, self.minis[1], tag="alice-tag")
         finally:
             conn.close()
 
@@ -78,11 +80,17 @@ class ApiIsolationTests(TestCase):
         return getattr(client, method)(path, **kwargs)
 
     def test_every_id_route_in_routes_is_classified(self):
+        # Routes whose capture group is a unit uuid, not a row id: catalog data, the same for everyone.
+        non_numeric_allowed = {"/api/art/([^/]+)", "/api/units/([^/]+)"}
         for method, pattern, handler in server.ROUTES:
-            first = pattern.pattern.find("(")
-            if first == -1 or not pattern.pattern.startswith("(\\d+)", first):
+            if pattern.groups == 0:
                 continue
-            with self.subTest(route=pattern.pattern, method=method):
+            raw = pattern.pattern[1:-1]
+            with self.subTest(route=raw, method=method):
+                if raw in non_numeric_allowed:
+                    continue
+                self.assertEqual(pattern.groups, 1, "a route with several groups needs a new check")
+                self.assertTrue(raw.split("(")[1].startswith("\\d+)"), f"unclassified group in {raw}")
                 self.assertTrue(
                     handler in server.OWNED_ID_ROUTES or handler in server.SHARED_ID_ROUTES,
                     f"{handler.__name__} takes an id but is not classified",
@@ -111,11 +119,86 @@ class ApiIsolationTests(TestCase):
         self.assertEqual(self.snapshot_a(), before)
 
     def test_other_users_data_is_not_listed(self):
+        client_a = Client(enforce_csrf_checks=False)
+        client_a.force_login(self.user_a)
         for path in ("/api/collection", "/api/forces", "/api/company-logos", "/api/company-colors", "/api/copy-tags"):
             with self.subTest(path=path):
                 response = self.client_b.get(path)
                 self.assertEqual(response.status_code, 200)
                 self.assertFalse(response.json())
+                own = client_a.get(path)
+                self.assertEqual(own.status_code, 200)
+                self.assertTrue(own.json(), "the owner should see their own rows")
+
+    def test_owner_can_use_every_force_route(self):
+        client_a = Client(enforce_csrf_checks=False)
+        client_a.force_login(self.user_a)
+        fid = self.force["id"]
+        export = client_a.get(f"/api/forces/{fid}/export")
+        self.assertEqual(export.status_code, 200, export.content)
+        self.assertTrue(export.json())
+        body = {"name": "Renamed", "formation": "lance", "units": [{"collection_id": self.entry["id"], "qty": 1}]}
+        saved = self.send(client_a, "put", f"/api/forces/{fid}", body)
+        self.assertEqual(saved.status_code, 200, saved.content)
+        self.assertEqual(saved.json()["name"], "Renamed")
+        deleted = self.send(client_a, "delete", f"/api/forces/{fid}")
+        self.assertEqual(deleted.status_code, 200, deleted.content)
+        self.assertEqual(client_a.get("/api/forces").json(), [])
+
+    def test_huge_ids_answer_404(self):
+        for path in (
+            "/api/minis/999999999999999999999999999999/photo",
+            "/api/collection/9223372036854775808/variants",
+            "/api/forces/99999999999999999999999999/export",
+        ):
+            with self.subTest(path=path):
+                response = self.client_b.get(path)
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response["Content-Type"], "application/json")
+                self.assertEqual(response.json(), {"error": "not found"})
+
+    def test_unexpected_handler_error_is_a_json_500_without_details(self):
+        def boom(conn, query, body):
+            raise RuntimeError("secret detail")
+
+        routes = [(m, p, boom if h is server.get_meta else h) for m, p, h in server.ROUTES]
+        with mock.patch.object(server, "ROUTES", routes), self.assertLogs("hosted.api", "ERROR"):
+            response = self.client_b.get("/api/meta")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertEqual(response.json(), {"error": "internal error"})
+        self.assertNotIn(b"secret", response.content)
+        self.assertNotIn(b"Traceback", response.content)
+
+    def test_form_and_oversized_bodies_with_a_valid_csrf_token_are_json(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user_b)
+        client.get("/api/auth/me")
+        token = client.cookies["csrftoken"].value
+        multipart = client.post(
+            "/api/collection", data={"unit_uuid": "u-locust"}, HTTP_X_CSRFTOKEN=token
+        )
+        self.assertEqual(multipart.status_code, 415)
+        self.assertEqual(multipart["Content-Type"], "application/json")
+        form = client.post(
+            "/api/collection", data="a=1", content_type="application/x-www-form-urlencoded",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(form.status_code, 415)
+        self.assertEqual(form["Content-Type"], "application/json")
+        big_form = client.post(
+            "/api/collection", data="a=" + "b" * (server.MAX_BODY_BYTES + 1),
+            content_type="application/x-www-form-urlencoded", HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(big_form.status_code, 413)
+        self.assertEqual(big_form["Content-Type"], "application/json")
+        big_json = client.post(
+            "/api/collection", data=b" " * (server.MAX_BODY_BYTES + 1), content_type="application/json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(big_json.status_code, 413)
+        self.assertEqual(big_json["Content-Type"], "application/json")
+        self.assertEqual(big_json.json(), {"error": "request body is too large"})
 
     def test_bulk_routes_with_foreign_ids_change_nothing(self):
         before = self.snapshot_a()
@@ -194,6 +277,8 @@ class ApiIsolationTests(TestCase):
         self.assertEqual(anon.get("/../manage.py").status_code, 404)
         self.assertEqual(anon.get("/%2e%2e/manage.py").status_code, 404)
         self.assertEqual(anon.get("/nothing-here.html").status_code, 404)
+        self.assertEqual(anon.get("/index.html%00").status_code, 404)
+        self.assertEqual(anon.get("/%00").status_code, 404)
         self.assertEqual(anon.post("/index.html").status_code, 405)
 
     @unittest.skip("login.html arrives in Task 8")

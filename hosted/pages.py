@@ -13,8 +13,12 @@ def page(request, path):
         return JsonResponse({"error": "method not allowed"}, status=HTTPStatus.METHOD_NOT_ALLOWED)
     rel = path.lstrip("/") or "index.html"
     web_dir = config.WEB_DIR.resolve()
-    target = (config.WEB_DIR / rel).resolve()
-    if web_dir not in target.parents or not target.is_file():
+    try:
+        target = (config.WEB_DIR / rel).resolve()
+        found = web_dir in target.parents and target.is_file()
+    except ValueError:  # an embedded null byte
+        found = False
+    if not found:
         return JsonResponse({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
     ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     if ctype.startswith("text/") or ctype.endswith("javascript"):

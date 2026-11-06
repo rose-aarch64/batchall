@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import art, availability, boxes, builder, catalog, collection, config, db, export, formations, forces
+from . import art, availability, boxes, builder, catalog, collection, config, copies, db, export, formations, forces
 from .kinds import KIND_LABELS, KINDS
 
 
@@ -103,6 +103,22 @@ def cmd_meta(args, conn):
     )
 
 
+MATERIALS = ("CGL Plastic", "Resin", "Metal")
+
+
+def _material(text):
+    """Match a material name ignoring case. "none" or an empty string clears it. None leaves it alone."""
+    if text is None:
+        return None
+    wanted = text.strip().lower()
+    if wanted in ("", "none", "no material"):
+        return ""
+    for name in MATERIALS:
+        if name.lower() == wanted:
+            return name
+    raise ValueError(f"material must be one of {', '.join(MATERIALS)}, or none to clear it")
+
+
 def cmd_collection(args, conn):
     a = args.action
     if a == "list":
@@ -165,6 +181,19 @@ def cmd_collection(args, conn):
                 conn, args.id, qty=args.qty, painted=args.painted, notes=args.notes, box=args.box
             )
         )
+    elif a == "mini":
+        if args.id is None:
+            raise ValueError("mini needs --id with a mini id (the ids in the minis list of collection list)")
+        fields = {
+            "note": args.note,
+            "tag": args.tag,
+            "faction": args.faction,
+            "company": args.company,
+            "box": args.box,
+            "material": _material(args.material),
+            "painted": None if args.painted is None else bool(args.painted),
+        }
+        _emit(copies.update(conn, args.id, **fields))
     elif a == "remove":
         collection.remove(conn, args.id)
         _emit({"removed": args.id})
@@ -313,9 +342,13 @@ def make_parser():
 
     col = sub.add_parser("collection", help="manage owned units")
     col.add_argument(
-        "action", choices=["list", "add", "set", "remove", "import", "boxes", "variants", "swap"]
+        "action", choices=["list", "add", "set", "mini", "remove", "import", "boxes", "variants", "swap"]
     )
-    col.add_argument("--id", type=int, help="collection entry id (set, remove)")
+    col.add_argument("--id", type=int, help="collection entry id (set, remove); mini id for mini")
+    col.add_argument("--note", help="mini: paint note")
+    col.add_argument("--tag", help="mini: copy tag")
+    col.add_argument("--company", help="mini: company it is painted for")
+    col.add_argument("--material", help="mini: CGL Plastic, Resin, Metal, or none to clear")
     col.add_argument("--uuid", help="catalog uuid (add)")
     col.add_argument("--name", help="exact unit name, e.g. 'Atlas AS7-D' (add)")
     col.add_argument("--qty", type=int, default=None)

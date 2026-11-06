@@ -44,6 +44,15 @@ class DbSplitTests(unittest.TestCase):
         self.assertEqual(target, self.path.parent / "users" / "7.db")
         self.assertTrue(target.exists())
 
+    def test_connect_user_refuses_a_missing_shared_file(self):
+        missing = Path(self._tmp.name) / "elsewhere" / "batchall.db"
+        with self.assertRaises(ValueError) as caught:
+            db.connect_user(1, missing)
+        self.assertIn("connect_shared", str(caught.exception))
+        self.assertFalse(missing.exists())
+        self.assertFalse(db.user_db_path(missing, 1).exists())
+        self.assertFalse(missing.parent.exists())
+
     def test_user_connection_cannot_see_shared_tables_as_main(self):
         conn = self.open_user(1)
         names = {r["name"] for r in conn.execute("SELECT name FROM main.sqlite_master")}

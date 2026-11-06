@@ -291,6 +291,11 @@ def connect_user(user_id, path=None):
     created or changed here; open it with ``connect_shared`` first.
     """
     shared_path = Path(path or config.DB_PATH)
+    if not shared_path.is_file():
+        raise ValueError(
+            f"the shared database {shared_path} does not exist; create it with connect_shared "
+            "(the admin setup step) before opening a user database"
+        )
     target = user_db_path(shared_path, user_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(target)

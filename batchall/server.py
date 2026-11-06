@@ -444,6 +444,29 @@ ROUTES = [
 ]
 ROUTES = [(m, re.compile(f"^{p}$"), h) for m, p, h in ROUTES]
 
+# Handlers whose first path group is the id of a row in one of the user's own tables. The hosted API
+# checks that the row exists in the signed-in user's database before calling the handler.
+OWNED_ID_ROUTES = {
+    get_entry_boxes: "collection",
+    get_variants: "collection",
+    post_swap: "collection",
+    patch_collection: "collection",
+    delete_collection: "collection",
+    patch_copy: "copies",
+    post_copy_swap: "copies",
+    delete_mini: "copies",
+    get_mini_photo: "copies",
+    put_mini_photo: "copies",
+    patch_mini_photo: "copies",
+    delete_mini_photo: "copies",
+    get_force_export: "forces",
+    put_force: "forces",
+    delete_force: "forces",
+}
+
+# Handlers whose id names a row of the shared catalog, the same for every user.
+SHARED_ID_ROUTES = frozenset({get_box_detail, post_box_add, get_faction_icon})
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "batchall/0.1"

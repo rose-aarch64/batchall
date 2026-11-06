@@ -98,6 +98,16 @@ fix. Nothing is guessed.
   Material, CGL Plastic, Resin and Metal. A mini with one shows it as a pill you can click to change
   or clear. The pencil and the table's Material column take any other value you type. Group by
   Material lists each material with only the minis made of it.
+- **Bulk changes.** Each card has a bar on top with a select box, the chassis name and a round button
+  that removes that one mini. In the table the select box is the first column. Tick several minis, or
+  shift-click to tick everything between two, and a bar appears at the bottom with how many are
+  selected. A box on each group header ticks the whole group, a dash meaning only some are ticked, and
+  the box at the top of the table's first column ticks everything shown. **Set material** in the bottom
+  bar sets all the selected minis to No Material, CGL Plastic, Resin or Metal in one go. It is all or
+  nothing, and the selection stays so you can make another change. Escape closes the menu, then clears
+  the selection. A mini that a filter hides, or that you remove, drops out of the selection, so a bulk
+  change never touches anything you cannot see. Behind it is `PATCH /api/minis` with a list of `ids` and
+  the fields to set, up to 5,000 minis at a time.
 - **Artwork.** Cards show each unit's illustration, downloaded once from MekBay and cached under
   `data/art/`. Units with no art show a placeholder. `python3 -m batchall art prefetch` downloads the images
   for your whole collection ahead of time.

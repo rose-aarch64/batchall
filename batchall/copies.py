@@ -59,9 +59,8 @@ def list_values(conn, field):
     return [{"value": r["value"], "copies": r["copies"]} for r in rows]
 
 
-def update(conn, copy_id, note=None, tag=None, faction=None, company=None, painted=None, box=None, material=None):
-    """Change the fields that are given and keep the rest."""
-    current = get(conn, copy_id)
+def _given(note, tag, faction, company, painted, box, material):
+    """The fields to write: text trimmed, painted as 0 or 1, and any field left as None skipped."""
     given = {
         name: value.strip()
         for name, value in (
@@ -72,6 +71,51 @@ def update(conn, copy_id, note=None, tag=None, faction=None, company=None, paint
     }
     if painted is not None:
         given["painted"] = 1 if painted else 0
+    return given
+
+
+BULK_CHUNK = 500  # ids per statement, well under SQLite's limit on parameters
+
+
+def update_many(conn, ids, note=None, tag=None, faction=None, company=None, painted=None, box=None, material=None):
+    """Set the given fields on several minis at once and return how many were changed.
+
+    All or nothing: if any id is unknown, or nothing is to be changed, an error is raised and no mini
+    is touched. An id listed twice counts once. Entries' painted totals are kept right.
+    """
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        raise CopyError("no minis were chosen")
+    given = _given(note, tag, faction, company, painted, box, material)
+    if not given:
+        raise CopyError("nothing to change")
+    chunks = [ids[i:i + BULK_CHUNK] for i in range(0, len(ids), BULK_CHUNK)]
+    with conn:
+        entries = set()
+        found = 0
+        for chunk in chunks:
+            marks = ",".join("?" for _ in chunk)
+            rows = conn.execute(f"SELECT id, collection_id FROM copies WHERE id IN ({marks})", chunk).fetchall()
+            found += len(rows)
+            entries.update(r["collection_id"] for r in rows)
+        if found != len(ids):
+            known = {r["id"] for chunk in chunks for r in conn.execute(
+                f"SELECT id FROM copies WHERE id IN ({','.join('?' for _ in chunk)})", chunk)}
+            raise CopyError(f"no mini with id {sorted(set(ids) - known)[0]}")  # nothing has been written yet
+        assignments = ", ".join(f"{name} = ?" for name in given)
+        for chunk in chunks:
+            marks = ",".join("?" for _ in chunk)
+            conn.execute(f"UPDATE copies SET {assignments} WHERE id IN ({marks})", (*given.values(), *chunk))
+        if "painted" in given:
+            for entry_id in entries:
+                collection.recount(conn, entry_id)
+    return len(ids)
+
+
+def update(conn, copy_id, note=None, tag=None, faction=None, company=None, painted=None, box=None, material=None):
+    """Change the fields that are given and keep the rest."""
+    current = get(conn, copy_id)
+    given = _given(note, tag, faction, company, painted, box, material)
     if given:
         # Write only the fields that were given. Quick edits send several saves at once, and rewriting
         # every field from a read taken earlier would put an old value back over a newer one.

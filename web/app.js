@@ -12,6 +12,8 @@ const state = {
   compact: false,
   collapsed: new Set(),
   editingCopy: null, // id of the mini whose fields are open for editing
+  selected: new Set(), // ids of the minis ticked for a bulk change
+  lastPicked: null, // the mini ticked last, where a shift-click range starts
   tray: { units: new Map(), forceId: null },
 };
 
@@ -679,8 +681,8 @@ function copyActions(item, copy, quickPaint = false) {
     h("button", { class: "icon", title: "Add another mini of this variant", onclick: () => addAnother(item) }, "+ another"),
     " ",
     h("button", { class: "icon", title: "Edit this mini", "aria-label": `Edit ${copyName(copy)}`, onclick: () => { state.editingCopy = copy.id; renderRoster(); } }, "✎"),
-    " ",
-    h("button", { class: "icon danger", title: "Remove this mini from the collection", "aria-label": `Remove ${item.name}`, onclick: () => removeMini(item, copy) }, "×"),
+    quickPaint ? null : " ", // a card has the remove button in its top bar
+    quickPaint ? null : h("button", { class: "icon danger", title: "Remove this mini from the collection", "aria-label": `Remove ${item.name}`, onclick: () => removeMini(item, copy) }, "×"),
   ];
 }
 
@@ -714,10 +716,146 @@ function materialControl(mini) {
   return holder;
 }
 
+// ---------- selecting minis for a bulk change ----------
+// A mini is ticked with its checkbox, and a shift-click ticks everything between it and the one ticked last.
+// Ticked minis are remembered by id across redraws. A mini that is no longer shown (filtered out or removed)
+// drops out of the selection, so a bulk change never touches something you cannot see.
+
+const CIRCLE_X_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="10.2"/><path d="M8 8l8 8M16 8l-8 8"/></svg>';
+const plural = (n) => `${n} ${n === 1 ? "mini" : "minis"}`;
+
+// Every mini the current filters show, whatever the grouping, each counted once.
+const shownMiniIds = () => [...new Set(state.items.flatMap((item) => visibleMinis(item).map((m) => m.id)))];
+
+function pruneSelection() {
+  const shown = new Set(shownMiniIds());
+  for (const id of [...state.selected]) if (!shown.has(id)) state.selected.delete(id);
+  if (state.lastPicked != null && !shown.has(state.lastPicked)) state.lastPicked = null;
+}
+
+function setSelected(ids, on) {
+  for (const id of ids) { if (on) state.selected.add(id); else state.selected.delete(id); }
+  syncSelectionUI();
+}
+
+function clearSelection() {
+  state.selected.clear();
+  state.lastPicked = null;
+  syncSelectionUI();
+}
+
+function pickMini(mini, on, shift) {
+  let ids = [mini.id];
+  if (shift && state.lastPicked != null) {
+    const order = [...document.querySelectorAll("input[data-mini]")].map((box) => Number(box.dataset.mini));
+    const from = order.indexOf(state.lastPicked), to = order.indexOf(mini.id);
+    if (from >= 0 && to >= 0) ids = order.slice(Math.min(from, to), Math.max(from, to) + 1);
+  }
+  state.lastPicked = mini.id;
+  setSelected(ids, on);
+}
+
+function selectBox(item, mini) {
+  return h("input", {
+    type: "checkbox", class: "sel-input", "data-mini": mini.id, checked: state.selected.has(mini.id),
+    "aria-label": `Select ${item.name}`,
+    onclick: (e) => pickMini(mini, e.target.checked, e.shiftKey),
+  });
+}
+
+// A checkbox over a set of minis (a group, or everything shown): ticked when all are, a dash when some are.
+// `ids` is a list, or a function that gives the list, for a set that changes.
+function scopeCheckbox(label, ids) {
+  const box = h("input", { type: "checkbox", class: "sel-input sel-scope", "aria-label": label });
+  box._ids = ids;
+  box.addEventListener("click", () => {
+    const list = typeof box._ids === "function" ? box._ids() : box._ids;
+    setSelected(list, !(list.length && list.every((id) => state.selected.has(id))));
+  });
+  return box;
+}
+
+// Brings every checkbox, highlight and the bulk bar in line with the selection without redrawing the roster.
+function syncSelectionUI() {
+  for (const box of document.querySelectorAll("input[data-mini]")) {
+    const on = state.selected.has(Number(box.dataset.mini));
+    box.checked = on;
+    box.closest("article, tr")?.classList.toggle("is-selected", on);
+  }
+  for (const box of document.querySelectorAll("input.sel-scope")) {
+    const ids = typeof box._ids === "function" ? box._ids() : box._ids || [];
+    const picked = ids.filter((id) => state.selected.has(id)).length;
+    box.checked = ids.length > 0 && picked === ids.length;
+    box.indeterminate = picked > 0 && picked < ids.length;
+  }
+  renderBulkBar();
+}
+
+function renderBulkBar() {
+  const picked = state.selected.size, shown = shownMiniIds().length;
+  $("bulkbar").hidden = picked === 0;
+  document.body.classList.toggle("has-bulkbar", picked > 0); // room at the bottom so the bar never hides the last cards
+  if (!picked) { closeBulkMenu(); return; }
+  $("bulk-count-text").replaceChildren(`${picked} selected `, h("small", {}, `of ${shown} shown`));
+  $("bulk-select-all").hidden = picked >= shown;
+  $("bulk-select-all").textContent = `Select all ${shown} shown`;
+}
+
+function closeBulkMenu() {
+  $("bulk-material-menu").hidden = true;
+  $("bulk-material").setAttribute("aria-expanded", "false");
+}
+
+function openBulkMenu() {
+  const menu = $("bulk-material-menu");
+  const choices = [["", NO_MATERIAL], ...MATERIALS.map((m) => [m, m])]; // the same order as a card's dropdown
+  menu.replaceChildren(
+    h("div", { class: "bulk-menu-head" }, `Material for ${plural(state.selected.size)}`),
+    ...choices.map(([value, label]) => h("button", {
+      type: "button", role: "menuitem", class: "bulk-menu-item", onclick: () => bulkSetMaterial(value),
+    }, label)));
+  menu.hidden = false;
+  $("bulk-material").setAttribute("aria-expanded", "true");
+  menu.querySelector("button").focus();
+}
+
+async function bulkSetMaterial(value) {
+  const ids = [...state.selected];
+  closeBulkMenu();
+  await guarded(async () => {
+    const result = await api("PATCH", "/api/minis", { ids, material: value });
+    toast(value ? `Set ${value} on ${plural(result.updated)}` : `Cleared the material on ${plural(result.updated)}`);
+  });
+  await loadCollection(); // keeps the selection, so another change can follow. It also puts things right after an error.
+}
+
+function setupBulkBar() {
+  const all = $("select-all-shown");
+  all.classList.add("sel-scope");
+  all._ids = shownMiniIds;
+  all.addEventListener("click", () => {
+    const ids = shownMiniIds();
+    setSelected(ids, !(ids.length && ids.every((id) => state.selected.has(id))));
+  });
+  $("bulk-select-all").addEventListener("click", () => setSelected(shownMiniIds(), true));
+  $("bulk-clear").addEventListener("click", clearSelection);
+  $("bulk-material").addEventListener("click", () => ($("bulk-material-menu").hidden ? openBulkMenu() : closeBulkMenu()));
+  document.addEventListener("click", (e) => {
+    if (!$("bulk-material-menu").hidden && !e.target.closest(".bulk-menu-wrap")) closeBulkMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || document.querySelector(".modal-backdrop")) return;
+    if (!$("bulk-material-menu").hidden) { closeBulkMenu(); $("bulk-material").focus(); return; }
+    if (e.target.closest?.("input[type=text], input[type=search], textarea, select")) return; // Escape in a box belongs to that box
+    if (state.selected.size) clearSelection();
+  });
+}
+
 function buildMiniRow(item, mini) {
   const editing = state.editingCopy === mini.id;
   const detail = isNamed(mini) ? copyLine(mini) : "";
   return h("tr", { class: isNamed(mini) ? "copy-line" : "mini-line" },
+    h("td", { class: "sel-cell" }, selectBox(item, mini)),
     h("td", {}, nameLink(item),
       editing ? copyEditor(item, mini)
         : (detail || mini.tag) ? h("div", { class: "copy-label", title: mini.note || null }, factionIcon(mini.faction), detail, detail && mini.tag ? " " : null, tagPill(mini)) : null),
@@ -741,22 +879,35 @@ function buildMiniRow(item, mini) {
     h("td", { class: "actions" }, copyActions(item, mini)));
 }
 
-// A mini's card shows the photo, the unit's stats, its material, tag and box, and a brush badge when painted.
-// A named mini also has a crimson strip under the photo naming its company and faction, with its note below
-// the stats. The pencil swaps the details for the editing boxes.
+// A mini's card has a bar on top with its select box, the chassis name and a button that removes it, then the
+// photo, the unit's stats, its material, tag and box, and a brush badge when painted. A named mini also has
+// a crimson strip under the photo naming its company and faction, with its note below the stats. The pencil
+// swaps the details for the editing boxes. The model code sits in the stats line so the bar's title fits.
 function buildMiniCard(item, mini) {
   const editing = state.editingCopy === mini.id;
   const heading = isNamed(mini) ? copyHeading(mini) : null;
   const noteLine = isNamed(mini) && (mini.company || mini.faction) && mini.note ? h("div", { class: "copy-note-line" }, mini.note) : null;
-  return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") },
+  const remove = h("button", {
+    type: "button", class: "sel-x", title: "Remove this mini from the collection", "aria-label": `Remove ${item.name}`,
+    onclick: () => removeMini(item, mini),
+  });
+  remove.innerHTML = CIRCLE_X_SVG;
+  const stats = [item.model || null, item.kind === "mech" ? null : kindLabel(item), `${item.tons ?? "?"}t`, `${item.bv} BV`];
+  return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") + (state.selected.has(mini.id) ? " is-selected" : "") },
+    h("div", { class: "sel-bar" },
+      selectBox(item, mini),
+      h("div", { class: "sel-title" }, h("button", {
+        type: "button", class: "unit-link", title: `${item.name}: show unit details`, onclick: () => showUnitDetail(item.unit_uuid),
+      }, item.chassis)),
+      remove),
     h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid) },
       artImage(item), mini.painted ? paintBadge() : null),
     heading ? h("div", { class: "copy-strip" },
       h("span", {}, heading.mainIsFaction ? factionIcon(mini.faction) : null, heading.main),
       heading.sub ? h("small", {}, heading.subIsFaction ? factionIcon(mini.faction) : null, heading.sub) : null) : null,
     h("div", { class: "card-body" },
-      h("div", { class: "card-name" }, nameLink(item)),
-      h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),
+      h("div", { class: "card-name card-variant-slot" }), // empty until the Variant picker opens in it
+      h("div", { class: "card-meta" }, stats.filter(Boolean).join(" · ")),
       editing ? copyEditor(item, mini) : [materialControl(mini), noteLine, tagPill(mini) ? h("div", {}, tagPill(mini)) : null],
       copyBox(item, mini) ? h("div", { class: "card-box" }, copyBox(item, mini)) : null,
       h("div", { class: "card-actions" }, copyActions(item, mini, true))));
@@ -904,13 +1055,16 @@ function groupHeader(name, list, collapsed) {
     savePrefs();
     renderRoster();
   };
-  return h("button", { class: "group-toggle", "aria-expanded": String(!collapsed), onclick: toggle },
-    h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"), " ",
-    h("strong", {}, name), " ",
-    h("span", { class: "group-meta" }, `${countText(list.length, t.models)} · ${t.bv.toLocaleString()} BV`), " ",
-    h("span", { class: "bar", "aria-hidden": "true", title: `${t.painted} of ${t.models} painted` },
-      h("i", { style: `width:${pct}%` })), " ",
-    h("span", { class: "group-meta" }, `${t.painted}/${t.models} painted`));
+  const ids = list.flatMap((item) => minisIn(item, groupScope(name)).map((m) => m.id));
+  return h("div", { class: "group-head-row" },
+    scopeCheckbox(`Select every mini in ${name}`, ids),
+    h("button", { class: "group-toggle", "aria-expanded": String(!collapsed), onclick: toggle },
+      h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"), " ",
+      h("strong", {}, name), " ",
+      h("span", { class: "group-meta" }, `${countText(list.length, t.models)} · ${t.bv.toLocaleString()} BV`), " ",
+      h("span", { class: "bar", "aria-hidden": "true", title: `${t.painted} of ${t.models} painted` },
+        h("i", { style: `width:${pct}%` })), " ",
+      h("span", { class: "group-meta" }, `${t.painted}/${t.models} painted`)));
 }
 
 // The default picture is the unit's artwork. A unit with no art, or art that fails to load, gets a placeholder.
@@ -963,7 +1117,7 @@ function renderTable(items) {
   if (isGrouped()) {
     for (const [name, list] of groupsOf(items)) {
       const collapsed = state.collapsed.has(collapseKey(name));
-      body.append(h("tr", { class: "group-row" }, h("td", { colspan: 8 }, groupHeader(name, list, collapsed))));
+      body.append(h("tr", { class: "group-row" }, h("td", { colspan: 9 }, groupHeader(name, list, collapsed))));
       if (!collapsed) body.append(...list.flatMap((item) => rowsFor(item, groupScope(name))));
     }
   } else {
@@ -1017,9 +1171,11 @@ function renderRoster() {
   // The group header already names the box, so the table's Box column would only repeat it.
   document.body.classList.toggle("group-by-box", isGrouped() && state.view === "table" && state.groupBy === "box");
   document.body.classList.toggle("compact", state.compact && state.view !== "cards");
+  pruneSelection(); // a mini that is no longer shown leaves the selection
   const items = sortedItems();
   if (state.view === "cards") renderCards(items); else renderTable(items);
   syncViewControls();
+  syncSelectionUI();
 }
 
 function setupViewControls() {
@@ -1483,6 +1639,7 @@ function setupControls() {
     loadPrefs();
     setupControls();
     setupViewControls();
+    setupBulkBar();
     setupSuggest();
     await loadCollection();
     await loadForces();

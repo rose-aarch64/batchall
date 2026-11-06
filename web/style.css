@@ -12,6 +12,7 @@
   --crimson-dark: #52111a;
   --accent: #e5384f;
   --accent-text: #ffffff;
+  --slate: #4c5762; /* the bar on top of an unselected card */
   --yellow: #f5d400;
   --tab-bg: #e9566c;
   --tab-text: #ffffff;
@@ -244,7 +245,7 @@ tr.group-row td { background: var(--row-hover); padding: 0; border-top: 1px soli
 .group-toggle .bar { display: inline-block; width: 90px; height: 7px; background: rgba(127, 127, 127, 0.3); vertical-align: middle; margin-right: 8px; }
 .group-toggle .bar i { display: block; height: 100%; background: var(--ok); }
 /* The group header already names the box, so the Box column would only repeat it. */
-body.group-by-box #roster th:nth-child(3), body.group-by-box #roster td:nth-child(3) { display: none; }
+body.group-by-box #roster th:nth-child(4), body.group-by-box #roster td:nth-child(4) { display: none; }
 /* Grouped cards: each group is a header bar over its own grid. */
 .card-group-head { background: var(--row-hover); border: 1px solid var(--border); margin-bottom: 12px; }
 .card-groups .card-grid { margin-bottom: 20px; }
@@ -301,11 +302,11 @@ body.view-cards .table-wrap { display: none; }
 
 /* Narrower windows: drop the least useful table columns before the table has to scroll sideways. */
 @media (max-width: 1250px) {
-  #roster th:nth-child(2), #roster td:nth-child(2) { display: none; } /* Type */
+  #roster th:nth-child(3), #roster td:nth-child(3) { display: none; } /* Type */
   td input.box-input { min-width: 160px; }
 }
 @media (max-width: 1000px) {
-  #roster th:nth-child(4), #roster td:nth-child(4) { display: none; } /* Tons */
+  #roster th:nth-child(5), #roster td:nth-child(5) { display: none; } /* Tons */
 }
 @media (max-width: 900px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
@@ -371,7 +372,7 @@ table.weapons th:first-child, table.weapons td:first-child { padding-left: 0; }
 .detail .credit { margin-top: 14px; }
 
 /* Minis with a note, faction or company */
-tr.copy-line td:first-child { padding-left: 22px; border-left: 2px solid var(--accent); }
+tr.copy-line td.sel-cell { border-left: 2px solid var(--accent); }
 tr.all-named { opacity: 0.6; }
 /* A named mini on its card: a crimson strip under the photo, then the note and tag. */
 .copy-strip { background: var(--crimson); color: #fff; padding: 6px 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; line-height: 1.35; overflow-wrap: anywhere; }
@@ -392,6 +393,57 @@ button.material-pill { display: inline-block; padding: 1px 8px; font: inherit; f
 .fld.inline { display: flex; align-items: center; gap: 6px; }
 .copy-editor .fld.inline input { width: auto; flex: 0 0 auto; }
 tr.copy-line .copy-editor { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+
+/* Selecting minis for a bulk change. */
+input.sel-input {
+  appearance: none; -webkit-appearance: none; width: 22px; height: 22px; min-width: 22px; margin: 0; padding: 0; flex: none;
+  border: 2px solid #fff; border-radius: 5px; background: transparent; cursor: pointer; vertical-align: middle;
+}
+input.sel-input:checked, .sel-input.is-on {
+  background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23b3243a' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'><path d='M3 8.5l3.2 3.2L13 4.5'/></svg>") center / 15px no-repeat;
+}
+input.sel-input:indeterminate {
+  background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 8h8' stroke='%23b3243a' stroke-width='2.6' stroke-linecap='round'/></svg>") center / 15px no-repeat;
+}
+input.sel-input:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+span.sel-input { display: inline-block; width: 22px; height: 22px; border: 2px solid #fff; border-radius: 5px; vertical-align: middle; }
+/* In the table and group headers the boxes sit on the dark background, so they are a little smaller and softer. */
+td.sel-cell, th.sel-cell { width: 34px; padding-right: 0; }
+td.sel-cell input.sel-input, th.sel-cell input.sel-input, .group-head-row input.sel-input { width: 18px; height: 18px; min-width: 18px; border-color: var(--muted); }
+tr.is-selected td { background: rgba(229, 56, 79, 0.14); }
+tr.is-selected td.sel-cell { box-shadow: inset 3px 0 0 var(--accent); }
+.group-head-row { display: flex; align-items: center; }
+.group-head-row > input.sel-input { margin-left: 14px; }
+.group-head-row .group-toggle { flex: 1; width: auto; min-width: 0; }
+
+/* The bar on top of a card: select box, the chassis name in italics, and a round button that removes the mini. */
+.mini-card .sel-bar { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px; background: var(--slate); color: #fff; flex: none; transition: background var(--fade); }
+.mini-card .sel-title { flex: 1; min-width: 0; text-align: center; }
+.mini-card .sel-title .unit-link { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; font-style: italic; font-weight: 600; font-size: 14px; background: none; border: 0; padding: 0; cursor: pointer; }
+.mini-card .sel-title .unit-link:hover { text-decoration: underline; filter: none; background: none; }
+.mini-card .sel-x { flex: none; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: #fff; opacity: 0.9; }
+.mini-card .sel-x:hover { color: var(--accent-text); background: rgba(0, 0, 0, 0.28); opacity: 1; filter: none; }
+.mini-card.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), 0 6px 22px rgba(229, 56, 79, 0.28); }
+.mini-card.is-selected .sel-bar { background: #b3243a; }
+.card-variant-slot:empty { display: none; }
+
+/* The bar that appears at the bottom while minis are selected. */
+body.has-bulkbar { padding-bottom: 84px; }
+.bulkbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 12px 22px; background: #1b1517; border-top: 2px solid var(--accent); box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+}
+.bulkbar[hidden] { display: none; }
+.bulkbar .spacer { flex: 1; }
+.bulk-count { display: flex; align-items: center; gap: 10px; margin-right: 6px; }
+.bulk-count small { font-weight: 400; color: var(--muted); }
+.bulkbar button.hot { border-color: var(--accent); background: #3a1a21; }
+.bulk-menu-wrap { position: relative; }
+.bulk-menu { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 51; min-width: 200px; padding: 4px; display: grid; background: #231a1d; border: 1px solid var(--accent); border-radius: 3px; box-shadow: 0 8px 26px rgba(0, 0, 0, 0.6); }
+.bulk-menu[hidden] { display: none; }
+.bulk-menu-head { padding: 6px 12px 4px; color: var(--muted); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+.bulk-menu-item { text-align: left; border: 0; border-radius: 2px; background: none; padding: 8px 12px; font-size: 13px; }
+.bulk-menu-item:hover, .bulk-menu-item:focus-visible { background: var(--crimson); filter: none; outline: none; }
 @media (max-width: 520px) { .detail-top { grid-template-columns: minmax(0, 1fr); } .detail .photo { max-width: 220px; } .modal.detail { padding: 16px; } }
 @keyframes fade-in { from { opacity: 0; } }
 

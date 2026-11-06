@@ -130,6 +130,36 @@ class ServerTests(unittest.TestCase):
         status, listed = self.request("GET", "/api/copy-factions")
         self.assertEqual(listed, [])
 
+    def test_bulk_set_material_over_api(self):
+        status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 3})
+        status, other = self.request("POST", "/api/collection", {"unit_uuid": "u-locust", "qty": 1})
+        ids = [m["id"] for m in entry["minis"]] + [m["id"] for m in other["minis"]]
+
+        status, body = self.request("PATCH", "/api/minis", {"ids": ids[:3], "material": "Resin"})
+        self.assertEqual((status, body), (200, {"updated": 3}))
+        status, items = self.request("GET", "/api/collection")
+        by_name = {i["name"]: [m["material"] for m in i["minis"]] for i in items}
+        self.assertEqual(by_name["Atlas AS7-D"], ["Resin", "Resin", "Resin"])
+        self.assertEqual(by_name["Locust LCT-1V"], [""])
+
+        status, body = self.request("PATCH", "/api/minis", {"ids": ids[:2], "material": ""})
+        self.assertEqual((status, body), (200, {"updated": 2}))
+
+        for bad in (
+            {"material": "Resin"},                  # no ids
+            {"ids": [], "material": "Resin"},       # empty
+            {"ids": "1,2", "material": "Resin"},    # not a list
+            {"ids": ["x"], "material": "Resin"},    # not numbers
+            {"ids": [True], "material": "Resin"},   # a boolean is not an id
+            {"ids": ids[:1]},                        # nothing to change
+            {"ids": ids[:1] + [99999], "material": "Resin"},  # unknown id
+            {"ids": list(range(1, 6002)), "material": "Resin"},  # far too many
+        ):
+            self.assertEqual(self.request("PATCH", "/api/minis", bad)[0], 400, msg=str(bad)[:60])
+        status, items = self.request("GET", "/api/collection")
+        by_name = {i["name"]: [m["material"] for m in i["minis"]] for i in items}
+        self.assertEqual(by_name["Atlas AS7-D"], ["", "", "Resin"])  # the refused calls changed nothing
+
     def test_the_named_copy_endpoints_are_gone(self):
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 2})
         mini = entry["minis"][0]

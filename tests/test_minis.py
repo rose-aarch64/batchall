@@ -136,6 +136,55 @@ class QuantityKeepsDetailsTests(unittest.TestCase):
         self.assertEqual([m["id"] for m in minis_of(self.conn, self.id)], [mini["id"]])
 
 
+class BulkUpdateTests(unittest.TestCase):
+    """Set the same fields on many minis at once, all or nothing."""
+
+    def setUp(self):
+        self.conn = make_db()
+        self.atlas = own(self.conn, "u-atlas", qty=3)
+        self.locust = own(self.conn, "u-locust", qty=2, painted=1)
+        self.ids = [m["id"] for e in (self.atlas, self.locust) for m in minis_of(self.conn, e["id"])]
+
+    def values(self, field):
+        return {m["id"]: m[field] for e in (self.atlas, self.locust) for m in minis_of(self.conn, e["id"])}
+
+    def test_sets_a_material_on_every_given_mini_and_leaves_the_rest(self):
+        chosen = [self.ids[0], self.ids[2], self.ids[4]]  # across both entries
+        self.assertEqual(copies.update_many(self.conn, chosen, material="Resin"), 3)
+        materials = self.values("material")
+        self.assertEqual({i for i, m in materials.items() if m == "Resin"}, set(chosen))
+        self.assertEqual({m for i, m in materials.items() if i not in chosen}, {""})
+
+    def test_a_blank_material_clears_it(self):
+        copies.update_many(self.conn, self.ids, material="Metal")
+        copies.update_many(self.conn, self.ids[:2], material="")
+        self.assertEqual([self.values("material")[i] for i in self.ids], ["", ""] + ["Metal"] * 3)
+
+    def test_the_value_is_trimmed_like_a_single_edit(self):
+        copies.update_many(self.conn, self.ids[:1], material="  CGL Plastic ")
+        self.assertEqual(self.values("material")[self.ids[0]], "CGL Plastic")
+
+    def test_an_id_listed_twice_counts_once(self):
+        self.assertEqual(copies.update_many(self.conn, [self.ids[0], self.ids[0]], material="Resin"), 1)
+
+    def test_an_unknown_id_changes_nothing_at_all(self):
+        with self.assertRaises(copies.CopyError):
+            copies.update_many(self.conn, [self.ids[0], 99999], material="Resin")
+        self.assertEqual(set(self.values("material").values()), {""})
+
+    def test_no_ids_or_nothing_to_change_is_rejected(self):
+        with self.assertRaises(copies.CopyError):
+            copies.update_many(self.conn, [], material="Resin")
+        with self.assertRaises(copies.CopyError):
+            copies.update_many(self.conn, self.ids)
+
+    def test_painted_in_bulk_keeps_each_entrys_total_right(self):
+        atlas_ids = [m["id"] for m in minis_of(self.conn, self.atlas["id"])]
+        copies.update_many(self.conn, atlas_ids, painted=True)
+        self.assertEqual(collection.get(self.conn, self.atlas["id"])["painted"], 3)
+        self.assertEqual(collection.get(self.conn, self.locust["id"])["painted"], 1)  # untouched
+
+
 class MaterialFilterTests(unittest.TestCase):
     def setUp(self):
         self.conn = make_db()

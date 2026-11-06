@@ -110,6 +110,26 @@ def patch_copy(conn, query, body, copy_id):
     )
 
 
+MAX_BULK_MINIS = 5000
+
+
+def patch_minis(conn, query, body):
+    """Set the same fields on many minis at once. Nothing changes unless every id is valid."""
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids:
+        raise ApiError("ids must be a non-empty list of mini ids")
+    if len(ids) > MAX_BULK_MINIS:
+        raise ApiError(f"at most {MAX_BULK_MINIS} minis can be changed in one request")
+    if any(isinstance(i, bool) or not isinstance(i, int) for i in ids):
+        raise ApiError("ids must be whole numbers")
+    updated = copies.update_many(
+        conn, ids, note=body.get("note"), tag=body.get("tag"), faction=body.get("faction"),
+        company=body.get("company"), painted=body.get("painted"), box=body.get("box"),
+        material=body.get("material"),
+    )
+    return {"updated": updated}
+
+
 def delete_mini(conn, query, body, copy_id):
     copies.delete_mini(conn, int(copy_id))
     return {"removed": int(copy_id)}
@@ -300,6 +320,7 @@ ROUTES = [
     ("GET", r"/api/collection/(\d+)/variants", get_variants),
     ("POST", r"/api/collection/(\d+)/swap", post_swap),
     ("PATCH", r"/api/copies/(\d+)", patch_copy),
+    ("PATCH", r"/api/minis", patch_minis),
     ("POST", r"/api/copies/(\d+)/swap", post_copy_swap),
     ("GET", r"/api/copy-tags", get_copy_tags),
     ("GET", r"/api/copy-factions", get_copy_factions),

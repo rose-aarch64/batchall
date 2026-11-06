@@ -100,6 +100,7 @@
           <table id="roster">
             <thead>
               <tr>
+                <th class="sel-cell"><input type="checkbox" class="sel-input" id="select-all-shown" aria-label="Select or deselect every mini shown"></th>
                 <th data-sort="name">Unit</th>
                 <th data-sort="kind">Type</th>
                 <th data-sort="box">Box</th>
@@ -166,6 +167,17 @@
       <ul id="forces-list" class="forces-list"></ul>
       <p id="forces-empty" class="muted small">No saved forces yet.</p>
     </aside>
+  </div>
+
+  <div id="bulkbar" class="bulkbar" role="region" aria-label="Changes for the selected minis" hidden>
+    <span class="bulk-count"><span class="sel-input is-on" aria-hidden="true"></span><strong id="bulk-count-text"></strong></span>
+    <button type="button" id="bulk-select-all"></button>
+    <span class="bulk-menu-wrap">
+      <button type="button" id="bulk-material" class="hot" aria-haspopup="menu" aria-expanded="false">Set material &#9662;</button>
+      <div id="bulk-material-menu" class="bulk-menu" role="menu" aria-label="Material for the selected minis" hidden></div>
+    </span>
+    <span class="spacer"></span>
+    <button type="button" id="bulk-clear">Clear selection</button>
   </div>
 
   <div id="suggest" class="suggest" role="listbox" aria-label="Suggestions" hidden></div>

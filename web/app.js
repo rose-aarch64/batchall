@@ -94,7 +94,14 @@ function confirmDialog(message, { confirmLabel = "OK", danger = false } = {}) {
 
 // ---------- unit detail panel ----------
 
-const LORE_TITLES = [["overview", "Overview"], ["capabilities", "Capabilities"], ["deployment", "Deployment"], ["history", "History"], ["notes", "Notes"]];
+// The lore sections in order, each with a short line saying what it covers (shown beside the title).
+const LORE_TITLES = [
+  ["overview", "Overview", "What it is and who built it"],
+  ["capabilities", "Capabilities", "What it carries and how it fights"],
+  ["deployment", "Deployment", "Who fielded it and where"],
+  ["history", "History", "How it came to be, and what it did"],
+  ["notes", "Notes", "Extra details that fit nowhere else"],
+];
 
 function stat(label, value) {
   if (value == null || value === "") return null;
@@ -107,6 +114,26 @@ function detailSection(title, ...children) {
   return h("section", { class: "detail-section" }, h("h3", {}, title), kids);
 }
 
+// The first sentence of a paragraph, so it can be set in bold as something to skim by. Returns null when
+// there is no clear sentence break, so a paragraph is never split in the middle of "3.5 m" or "Dr. Smith".
+function leadSentence(text) {
+  const m = /^(.{25,}?[.!?])\s+(?=[A-Z“"'(])/.exec(text);
+  if (!m || /\b(?:[A-Z][a-z]?|Dr|Mr|Mrs|Ms|St|Lt|Col|Gen|Cmdr|vs|No)\.$/.test(m[1])) return null;
+  return { lead: m[1], rest: text.slice(m[0].length) };
+}
+
+function lorePara(text) {
+  const split = leadSentence(text);
+  return split ? h("p", {}, h("strong", { class: "lead" }, split.lead), " ", split.rest) : h("p", {}, text);
+}
+
+// A lore section that folds up. Closed, it is its title and a short line about what the section covers.
+function loreSection(title, blurb, paragraphs, open) {
+  return h("details", { class: "detail-section lore", open }, // `open` is only added to the page when true
+    h("summary", {}, h("span", { class: "lore-title" }, title), h("span", { class: "lore-blurb" }, blurb)),
+    paragraphs.map(lorePara));
+}
+
 function weaponTable(weapons) {
   if (!weapons || !weapons.length) return null;
   return h("table", { class: "weapons" },
@@ -115,7 +142,26 @@ function weaponTable(weapons) {
       h("td", {}, w.name), h("td", {}, w.location || ""), h("td", {}, w.qty), h("td", {}, w.damage || ""), h("td", {}, w.range || "")))));
 }
 
-function buildDetail(unit, close) {
+// A bigger version of the mini's card, for the top left of the panel: the photo (or the unit's line art), the
+// crimson strip with the company and faction when the panel was opened from a mini that has them, then the
+// mech's name and a line of facts. Opened without a mini (from a table row), it shows the line art and name.
+function detailCard(unit, summary, mini) {
+  const photo = mini?.photo;
+  const showStrip = mini && isNamed(mini);
+  return h("div", { class: "detail-card" },
+    h("div", { class: "photo" + (photo ? " has-photo" : unit.has_art ? " has-art" : "") },
+      photo ? miniPhotoImage(mini) : artImage({ has_art: unit.has_art, unit_uuid: unit.uuid }),
+      mini?.painted ? paintBadge() : null),
+    showStrip ? h("div", { class: "copy-strip", style: stripStyle(mini) }, stripLines(mini)) : null,
+    h("div", { class: "detail-card-body" },
+      h("h2", {}, unit.chassis || unit.name),
+      h("div", { class: "detail-card-meta" }, [unit.model, summary].filter(Boolean).join(" · ")),
+      mini && (mini.material || mini.tag) ? h("div", { class: "detail-card-pills" },
+        mini.material ? h("span", { class: "material-static" }, mini.material) : null, tagPill(mini)) : null,
+      mini && mini.note && (mini.company || mini.faction) ? h("div", { class: "copy-note-line" }, mini.note) : null));
+}
+
+function buildDetail(unit, close, mini) {
   const s = unit.specs || {};
   const mv = s.movement || {};
   const heat = s.heat || {};
@@ -125,41 +171,40 @@ function buildDetail(unit, close) {
   const lore = unit.lore || {};
   const moves = [["Walk", mv.walk], ["Run", mv.run], ["Jump", mv.jump]].filter(([, v]) => v != null).map(([k, v]) => `${k} ${v}`).join(" / ");
   const summary = [kindLabel(unit), unit.tons != null ? `${unit.tons}t` : null, `${unit.bv} BV`, unit.year, unit.tech_base, unit.role].filter(Boolean).join(" · ");
-  const loreSections = LORE_TITLES.filter(([key]) => lore[key]).map(([key, title]) =>
-    detailSection(title, lore[key].map((p) => h("p", {}, p))));
+  // Every lore section starts folded up, so the panel is not a wall of text. Click one to read it.
+  const loreSections = LORE_TITLES.filter(([key]) => lore[key] && lore[key].length)
+    .map(([key, title, blurb]) => loreSection(title, blurb, lore[key], false));
   const credits = [lore.manufacturer && `Manufacturer: ${lore.manufacturer}`, lore.primaryFactory && `Primary factory: ${lore.primaryFactory}`].filter(Boolean);
   const closeButton = h("button", { type: "button", class: "icon detail-close", "aria-label": "Close", onclick: () => close() }, "Close");
   return h("div", { class: "modal detail", role: "dialog", "aria-modal": "true", "aria-label": `${unit.name} details` },
-    h("div", { class: "detail-head" },
-      h("div", {}, h("h2", {}, unit.name), h("p", { class: "muted small" }, summary)),
-      closeButton),
-    h("div", { class: "detail-top" },
-      h("div", { class: "photo" + (unit.has_art ? " has-art" : "") }, artImage({ has_art: unit.has_art, unit_uuid: unit.uuid })),
-      unit.has_details
-        ? h("div", { class: "stats" },
-            stat("Movement", moves), stat("Move type", mv.type),
-            stat("Armor", armor.points != null ? `${armor.points}${armor.type ? ` (${armor.type})` : ""}` : null),
-            stat("Structure", structure.type), stat("Internal", structure.internal),
-            stat("Engine", engine.type ? `${engine.type}${engine.rating ? ` ${engine.rating}` : ""}` : null),
-            stat("Heat", heat.generated != null ? `${heat.generated} generated, ${heat.dissipation ?? "?"} dissipated` : null),
-            stat("Tech", [s.level, s.tech_rating].filter(Boolean).join(" · ")),
-            stat("Crew", s.crew), stat("Cost", s.cost != null ? `${s.cost.toLocaleString()} C-bills` : null))
-        : h("p", { class: "muted" }, "No detail data yet. Run python3 -m batchall catalog import once to load it.")),
-    h("div", { class: "detail-body" },
-      h("div", {},
+    h("div", { class: "detail-head" }, closeButton),
+    h("div", { class: "detail-layout" },
+      detailCard(unit, summary, mini),
+      h("div", { class: "detail-main" },
+        unit.has_details
+          ? h("div", { class: "stats" },
+              stat("Movement", moves), stat("Move type", mv.type),
+              stat("Armor", armor.points != null ? `${armor.points}${armor.type ? ` (${armor.type})` : ""}` : null),
+              stat("Structure", structure.type), stat("Internal", structure.internal),
+              stat("Engine", engine.type ? `${engine.type}${engine.rating ? ` ${engine.rating}` : ""}` : null),
+              stat("Heat", heat.generated != null ? `${heat.generated} generated, ${heat.dissipation ?? "?"} dissipated` : null),
+              stat("Tech", [s.level, s.tech_rating].filter(Boolean).join(" · ")),
+              stat("Crew", s.crew), stat("Cost", s.cost != null ? `${s.cost.toLocaleString()} C-bills` : null))
+          : h("p", { class: "muted" }, "No detail data yet. Run python3 -m batchall catalog import once to load it."),
         unit.has_details ? detailSection("Weapons", weaponTable(s.weapons)) : null,
-        unit.has_details && s.quirks && s.quirks.length ? detailSection("Quirks", h("p", {}, s.quirks.join(", "))) : null),
-      h("div", {},
+        unit.has_details && s.quirks && s.quirks.length ? detailSection("Quirks", h("p", {}, s.quirks.join(", "))) : null,
         loreSections,
         unit.has_details && !loreSections.length ? h("p", { class: "muted small" }, "No lore text for this unit. The lore file may not have been imported.") : null)),
     credits.length ? h("p", { class: "muted small" }, credits.join(" · ")) : null,
     h("p", { class: "muted small credit" }, "Unit data and text via MekBay and the MegaMek team."));
 }
 
-async function showUnitDetail(uuid) {
+// `mini` is the mini whose card opened the panel, so the panel can show its photo and strip. It is
+// omitted when the panel is opened from somewhere that is not one mini, like a table row.
+async function showUnitDetail(uuid, mini) {
   await guarded(async () => {
     const unit = await api("GET", `/api/units/${encodeURIComponent(uuid)}`);
-    const modal = openModal(buildDetail(unit, () => modal.close()));
+    const modal = openModal(buildDetail(unit, () => modal.close(), mini));
     document.querySelector(".detail-close").focus();
   });
 }
@@ -577,8 +622,9 @@ function visibleMinis(item) {
 // A mini with a note, faction or company gets a crimson strip on its card, naming what it is painted for.
 const isNamed = (mini) => Boolean(mini.note || mini.faction || mini.company);
 
-// The logo of the faction a mini is painted for. It is matched on the exact faction name from MekBay,
-// ignoring case. A name MekBay does not list, or a logo that fails to load, shows nothing.
+// The logo of the faction a mini is painted for, or of its company when MekBay lists the company as a
+// faction too (Wolf's Dragoons, Kell Hounds). It is matched on the exact name from MekBay, ignoring case.
+// A name MekBay does not list, or a logo that fails to load, shows nothing.
 function factionIcon(name) {
   const key = (name || "").trim().toLowerCase();
   if (!key || !state.meta) return null;
@@ -590,12 +636,152 @@ function factionIcon(name) {
   });
 }
 
-// What a named mini is called on its card: the company, with the faction under it. A mini that has
-// neither (it only has a note) falls back to its note. The flags say which line holds the faction.
-function copyHeading(copy) {
-  if (copy.company) return { main: copy.company, sub: copy.faction, subIsFaction: true };
-  if (copy.faction) return { main: copy.faction, sub: "", mainIsFaction: true };
-  return { main: copy.note, sub: "" };
+// ---------- company logos ----------
+// A company's logo is one you confirmed from Sarna. Names are matched ignoring case and outer space.
+const companyKey = (name) => (name || "").trim().toLowerCase();
+
+async function loadCompanyLogos() {
+  try {
+    state.companyLogos = new Map((await api("GET", "/api/company-logos")).map((l) => [l.key, l]));
+  } catch {
+    state.companyLogos = new Map(); // logos are decoration, so a failure here must not stop the page
+  }
+  try {
+    state.companyColors = new Map((await api("GET", "/api/company-colors")).map((c) => [c.key, c.color]));
+  } catch {
+    state.companyColors = new Map();
+  }
+}
+
+// ---------- company strip colors ----------
+const DEFAULT_STRIP_COLOR = "#8A1C2B"; // the crimson every strip has until its company is given a color
+const STRIP_SWATCHES = ["#8A1C2B", "#2E3036", "#2F5D3A", "#1F4E8C", "#C9A227", "#6B3FA0", "#B5541C", "#0F6E6E", "#7A7F87", "#D9D2C5"];
+const HEX6 = /^#[0-9A-F]{6}$/;
+
+// Near-black text on a pale color and white on a dark one, by relative luminance.
+function textOnColor(hex) {
+  const channel = (i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5) > 0.35 ? "#14100F" : "#FFFFFF";
+}
+
+// The inline style that colors a mini's strip, or null when its company has no color (the stylesheet's crimson applies).
+function stripStyle(copy) {
+  const color = state.companyColors?.get(companyKey(copy.company));
+  return color && HEX6.test(color) ? `--strip: ${color}; --strip-text: ${textOnColor(color)}` : null;
+}
+
+const companyLogoUrl = (logo) => `/api/company-logos/image?name=${encodeURIComponent(logo.name)}&v=${encodeURIComponent(logo.version)}`;
+
+// The logo for a company name: the one you saved, else MekBay's faction logo when the company is also a faction.
+function companyIcon(name) {
+  const logo = state.companyLogos?.get(companyKey(name));
+  if (!logo) return factionIcon(name);
+  return h("img", {
+    class: "faction-icon company-logo" + (logo.opaque ? " opaque" : ""), src: companyLogoUrl(logo), alt: "",
+    title: logo.name, loading: "lazy", onerror: (e) => e.target.remove(),
+  });
+}
+
+// The strip color part of the company dialog: swatches, a color box and a hex box, with a live preview strip.
+// Nothing is saved until "Save color" is pressed.
+function colorSection(name, finish) {
+  const saved = state.companyColors?.get(companyKey(name)) || null;
+  let draft = saved || DEFAULT_STRIP_COLOR;
+  const preview = h("div", { class: "copy-strip color-preview" }, stripLine(null, name));
+  const hexBox = h("input", { type: "text", class: "hex-input", maxlength: "7", spellcheck: "false", "aria-label": "Hex color", placeholder: DEFAULT_STRIP_COLOR });
+  const picker = h("input", { type: "color", class: "color-input", "aria-label": "Pick a color" });
+  const swatches = h("div", { class: "swatches" });
+  const normalize = (value) => {
+    let v = value.trim().toUpperCase();
+    if (!v.startsWith("#")) v = "#" + v;
+    if (/^#[0-9A-F]{3}$/.test(v)) v = "#" + [...v.slice(1)].map((d) => d + d).join("");
+    return HEX6.test(v) ? v : null;
+  };
+  const show = () => {
+    preview.setAttribute("style", `--strip: ${draft}; --strip-text: ${textOnColor(draft)}`);
+    picker.value = draft.toLowerCase();
+    if (document.activeElement !== hexBox) hexBox.value = draft;
+    for (const b of swatches.children) b.setAttribute("aria-pressed", String(b.dataset.color === draft));
+  };
+  const set = (color) => { draft = color; show(); };
+  swatches.append(...STRIP_SWATCHES.map((color) => h("button", {
+    type: "button", class: "swatch", style: `background: ${color}`, title: color, "data-color": color, "aria-label": `Color ${color}`,
+    onclick: () => set(color),
+  })));
+  picker.addEventListener("input", () => set(picker.value.toUpperCase()));
+  hexBox.addEventListener("input", () => { const v = normalize(hexBox.value); if (v) set(v); });
+  hexBox.addEventListener("blur", show);
+  const save = async () => {
+    if (await guarded(() => api("PUT", "/api/company-colors", { name, color: draft }))) { toast(`Saved the ${name} strip color`); await finish(); }
+  };
+  const reset = async () => {
+    if (!saved) { set(DEFAULT_STRIP_COLOR); return; }
+    if (await guarded(() => api("DELETE", `/api/company-colors?name=${encodeURIComponent(name)}`))) { toast(`${name} is back to the default color`); await finish(); }
+  };
+  show();
+  return h("div", { class: "color-section" },
+    h("h4", {}, "Strip color"),
+    preview, swatches,
+    h("div", { class: "color-row" }, picker, hexBox),
+    h("div", { class: "color-row" },
+      h("button", { type: "button", class: "icon primary", onclick: save }, "Save color"),
+      h("button", { type: "button", class: "icon", onclick: reset }, "Back to crimson")),
+    h("p", { class: "muted small" }, "Text on the strip turns dark on a pale color so it stays readable."));
+}
+
+// Looks the company up on Sarna and shows what it found, and lets you pick its strip color. Nothing is
+// saved until "Use this" or "Save color" is pressed.
+async function pickCompanyLogo(name, onDone) {
+  name = (name || "").trim();
+  if (!name) { toast("Type a company name first.", true); return; }
+  const existing = state.companyLogos?.get(companyKey(name));
+  const body = h("div", { class: "logo-results" }, h("p", { class: "muted" }, "Looking on Sarna…"));
+  let modal;
+  const finish = async () => { await loadCompanyLogos(); renderRoster(); modal.close(true); if (onDone) onDone(); };
+  const use = async (c) => {
+    const saved = await guarded(() => api("PUT", "/api/company-logos", { name, image_url: c.image_url, source_title: c.title }));
+    if (saved) { toast(`Saved the ${name} logo`); await finish(); }
+  };
+  const drop = async () => {
+    if (await guarded(() => api("DELETE", `/api/company-logos?name=${encodeURIComponent(name)}`))) { toast(`Removed the ${name} logo`); await finish(); }
+  };
+  const cancel = h("button", { type: "button", onclick: () => modal.close(false) }, "Close");
+  modal = openModal(h("div", { class: "modal logo-picker", role: "dialog", "aria-modal": "true", "aria-label": `Logo for ${name}` },
+    h("h3", {}, `Logo and color for ${name}`),
+    existing ? h("div", { class: "logo-current" }, h("img", { src: companyLogoUrl(existing), alt: "", class: "logo-thumb" + (existing.opaque ? " opaque" : "") }),
+      h("span", {}, "Current logo"), h("button", { type: "button", class: "icon danger", onclick: drop }, "Remove")) : null,
+    body,
+    colorSection(name, () => finish()),
+    h("div", { class: "modal-actions" }, cancel)));
+  cancel.focus();
+  try {
+    const found = await api("GET", `/api/company-logos/candidates?name=${encodeURIComponent(name)}`);
+    body.replaceChildren(...(found.length
+      ? [h("p", { class: "muted small" }, "Pick the one that is the logo. Nothing is saved until you do."),
+        h("div", { class: "logo-grid" }, found.map((c) => h("figure", { class: "logo-card" },
+          h("img", { src: c.image_url, alt: c.title, class: "logo-thumb", referrerpolicy: "no-referrer" }),
+          h("figcaption", {}, h("a", { href: c.page_url, target: "_blank", rel: "noopener noreferrer" }, c.title)),
+          h("button", { type: "button", class: "icon primary", onclick: () => use(c) }, "Use this"))))]
+      : [h("p", { class: "muted" }, `Sarna has no page with an image for "${name}".`)]));
+  } catch (err) {
+    body.replaceChildren(h("p", { class: "muted" }, err.message));
+  }
+}
+
+// One line of a card's strip: an optional logo, then the text.
+const stripLine = (icon, text, sub) => h("div", { class: "strip-line" + (sub ? " sub" : "") }, icon, h("span", { class: "strip-text", title: text }, text));
+
+// What a named mini is called on its card: the company with the faction under it. A mini with only a
+// faction shows that on the big line, and one with only a note shows the note there.
+function stripLines(copy) {
+  if (copy.company) {
+    return [stripLine(companyIcon(copy.company), copy.company), copy.faction ? stripLine(factionIcon(copy.faction), copy.faction, true) : null];
+  }
+  if (copy.faction) return [stripLine(factionIcon(copy.faction), copy.faction)];
+  return [stripLine(null, copy.note)];
 }
 
 const copyLine = (copy) => [copy.company, copy.faction].filter(Boolean).join(" · ") || copy.note;
@@ -620,6 +806,14 @@ function copyEditor(item, copy) {
     field("Note", "note"),
     field("Faction", "faction", { list: "copy-faction-options" }),
     field("Company", "company", { list: "copy-company-options" }),
+    h("button", {
+      type: "button", class: "icon logo-find", title: "Find this company's logo on Sarna and choose its strip color",
+      onclick: (e) => pickCompanyLogo(e.currentTarget.previousElementSibling.querySelector("input").value),
+    }, "Logo & color…"),
+    h("button", {
+      type: "button", class: "icon photo-find", title: "Add or crop a photo of this mini",
+      onclick: () => openPhotoDialog(item, copy),
+    }, copy.photo ? "Change photo…" : "Photo…"),
     field("Tag", "tag", { list: "tag-options" }),
     field("Material", "material", { list: "material-options", placeholder: "e.g. Metal, Resin" }),
     field("Box", "box", { "data-suggest": "box", "data-entry": item.id, autocomplete: "off", placeholder: item.box || "none" }),
@@ -939,7 +1133,7 @@ function buildMiniRow(item, mini) {
     h("td", { class: "sel-cell" }, selectBox(item, mini)),
     h("td", {}, nameLink(item),
       editing ? copyEditor(item, mini)
-        : (detail || mini.tag) ? h("div", { class: "copy-label", title: mini.note || null }, factionIcon(mini.faction), detail, detail && mini.tag ? " " : null, tagPill(mini)) : null),
+        : (detail || mini.tag) ? h("div", { class: "copy-label", title: mini.note || null }, companyIcon(mini.company), factionIcon(mini.faction), detail, detail && mini.tag ? " " : null, tagPill(mini)) : null),
     h("td", {}, kindLabel(item)),
     h("td", {}, h("input", {
       type: "text", class: "box-input", value: mini.box, "data-suggest": "box", "data-entry": item.id, autocomplete: "off",
@@ -962,11 +1156,11 @@ function buildMiniRow(item, mini) {
 
 // A mini's card has a bar on top with its select box, the chassis name and a button that removes it, then the
 // photo, the unit's stats, its material, tag and box, and a brush badge when painted. A named mini also has
-// a crimson strip under the photo naming its company and faction, with its note below the stats. The pencil
-// swaps the details for the editing boxes. The model code sits in the stats line so the bar's title fits.
+// a crimson strip under the photo naming its company and faction, with its note below the stats. The mech's
+// name is the first line under the photo or strip. The pencil swaps the details for the editing boxes.
+// The model code sits in the stats line.
 function buildMiniCard(item, mini) {
   const editing = state.editingCopy === mini.id;
-  const heading = isNamed(mini) ? copyHeading(mini) : null;
   const noteLine = isNamed(mini) && (mini.company || mini.faction) && mini.note ? h("div", { class: "copy-note-line" }, mini.note) : null;
   const remove = h("button", {
     type: "button", class: "sel-x", title: "Remove this mini from the collection", "aria-label": `Remove ${item.name}`,
@@ -977,16 +1171,14 @@ function buildMiniCard(item, mini) {
   return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") + (state.selected.has(mini.id) ? " is-selected" : "") },
     h("div", { class: "sel-bar" },
       selectBox(item, mini),
-      h("div", { class: "sel-title" }, h("button", {
-        type: "button", class: "unit-link", title: `${item.name}: show unit details`, onclick: () => showUnitDetail(item.unit_uuid),
-      }, item.chassis)),
+      h("div", { class: "sel-title" }), // empty: the mech's name is in the strip under the photo
       remove),
-    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid) },
-      artImage(item), mini.painted ? paintBadge() : null),
-    heading ? h("div", { class: "copy-strip" },
-      h("span", {}, heading.mainIsFaction ? factionIcon(mini.faction) : null, heading.main),
-      heading.sub ? h("small", {}, heading.subIsFaction ? factionIcon(mini.faction) : null, heading.sub) : null) : null,
+    miniPhotoFrame(item, mini),
+    isNamed(mini) ? h("div", { class: "copy-strip", style: stripStyle(mini) }, stripLines(mini)) : null,
     h("div", { class: "card-body" },
+      h("div", { class: "card-title" }, h("button", {
+        type: "button", class: "unit-link", title: `${item.name}: show unit details`, onclick: () => showUnitDetail(item.unit_uuid, mini),
+      }, item.chassis)),
       h("div", { class: "card-name card-variant-slot" }), // empty until the Variant picker opens in it
       h("div", { class: "card-meta" }, stats.filter(Boolean).join(" · ")),
       editing ? copyEditor(item, mini) : [materialControl(mini), noteLine, tagPill(mini) ? h("div", {}, tagPill(mini)) : null],
@@ -1168,6 +1360,190 @@ function paintToggle(copy) {
   });
   button.innerHTML = BRUSH_SVG;
   return button;
+}
+
+// ---------- mini photos ----------
+// A mini's photo is shown through a square window. The crop is a zoom (1 just covers the window) and the point
+// of the photo (cx, cy, each 0 to 1) that sits in the middle of the window. The card and the crop dialog use
+// the same math, so what you see while cropping is what the card shows. Sizes are fractions of the window.
+const PHOTO_MAX_SIDE = 1200; // photos are shrunk to this many pixels on the long side before they are sent
+const PHOTO_MAX_ZOOM = 6;
+const clamp = (v, low, high) => Math.min(high, Math.max(low, v));
+
+function cropGeometry(photo, zoom = photo.zoom, cx = photo.cx, cy = photo.cy) {
+  const ratio = photo.width / photo.height;
+  const W = (ratio >= 1 ? ratio : 1) * zoom; // the photo's width and height, in windows
+  const H = (ratio >= 1 ? 1 : 1 / ratio) * zoom;
+  const x = clamp(cx, 0.5 / W, 1 - 0.5 / W); // keep the window inside the photo
+  const y = clamp(cy, 0.5 / H, 1 - 0.5 / H);
+  return { W, H, cx: x, cy: y, left: 0.5 - x * W, top: 0.5 - y * H };
+}
+
+function applyCrop(img, photo, zoom, cx, cy) {
+  const g = cropGeometry(photo, zoom, cx, cy);
+  img.style.cssText = `width: ${g.W * 100}%; height: ${g.H * 100}%; left: ${g.left * 100}%; top: ${g.top * 100}%`;
+  return g;
+}
+
+const miniPhotoUrl = (mini) => `/api/minis/${mini.id}/photo?v=${encodeURIComponent(mini.photo.version)}`;
+
+function miniPhotoImage(mini) {
+  const img = h("img", { class: "mini-photo", src: miniPhotoUrl(mini), alt: "", loading: "lazy", draggable: "false" });
+  applyCrop(img, mini.photo);
+  return img;
+}
+
+// Shrinks a photo file to a JPEG data URL. Returns { dataUrl, width, height }.
+async function prepareImage(file) {
+  if (!file || !file.type.startsWith("image/")) throw new Error("That file is not an image.");
+  const bitmap = await createImageBitmap(file).catch(() => { throw new Error("The browser could not open that image."); });
+  const scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = h("canvas", { width, height });
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; // a see-through PNG becomes JPEG, so give it a background
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close?.();
+  return { dataUrl: canvas.toDataURL("image/jpeg", 0.88), width, height };
+}
+
+const imageFileFrom = (list) => [...(list || [])].find((f) => f.type?.startsWith("image/")) || null;
+
+// The photo dialog: choose a photo (button, drop or paste), drag it to move and zoom it, then save.
+// Saving without choosing a new photo only changes the crop of the one the mini already has.
+function openPhotoDialog(item, mini, firstFile) {
+  let source = mini.photo ? { url: miniPhotoUrl(mini), width: mini.photo.width, height: mini.photo.height, dataUrl: null } : null;
+  let zoom = mini.photo ? mini.photo.zoom : 1;
+  let cx = mini.photo ? mini.photo.cx : 0.5;
+  let cy = mini.photo ? mini.photo.cy : 0.5;
+  let modal;
+  let pasteHandler;
+
+  const view = h("div", { class: "crop-view", tabindex: "0", role: "img", "aria-label": "Photo crop. Drag to move it." });
+  const img = h("img", { class: "crop-img", alt: "", draggable: "false" });
+  const empty = h("div", { class: "crop-empty" }, "Choose a photo, drop one here, or paste one.");
+  const slider = h("input", { type: "range", min: "1", max: String(PHOTO_MAX_ZOOM), step: "0.01", value: String(zoom), "aria-label": "Zoom" });
+  const saveButton = h("button", { type: "button", class: "icon primary" }, "Save photo");
+  const fileInput = h("input", { type: "file", accept: "image/*" }); // never added to the page, opened by the button
+
+  const show = () => {
+    const shown = source ? img : empty;
+    if (view.firstChild !== shown) view.replaceChildren(shown);
+    slider.disabled = saveButton.disabled = !source;
+    if (!source) return;
+    if (img.getAttribute("src") !== source.url) img.src = source.url;
+    const g = applyCrop(img, source, zoom, cx, cy);
+    cx = g.cx; cy = g.cy;
+    slider.value = String(zoom);
+  };
+  const setZoom = (value) => { zoom = clamp(value, 1, PHOTO_MAX_ZOOM); show(); };
+
+  const load = async (file) => {
+    try {
+      const prepared = await prepareImage(file);
+      source = { url: prepared.dataUrl, width: prepared.width, height: prepared.height, dataUrl: prepared.dataUrl };
+      zoom = 1; cx = 0.5; cy = 0.5;
+      show();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+
+  // Dragging moves the photo under the window.
+  let drag = null;
+  view.addEventListener("pointerdown", (e) => {
+    if (!source) return;
+    view.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY };
+    view.classList.add("dragging");
+  });
+  view.addEventListener("pointermove", (e) => {
+    if (!drag || !source) return;
+    const size = view.getBoundingClientRect().width / (parseFloat(getComputedStyle(document.documentElement).zoom) || 1);
+    const g = cropGeometry(source, zoom, cx, cy);
+    // Pointer movement is reported in on-screen pixels, so undo the page zoom before turning it into window fractions.
+    const scale = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+    cx -= (e.clientX - drag.x) / scale / (size * g.W);
+    cy -= (e.clientY - drag.y) / scale / (size * g.H);
+    drag = { x: e.clientX, y: e.clientY };
+    show();
+  });
+  const endDrag = () => { drag = null; view.classList.remove("dragging"); };
+  view.addEventListener("pointerup", endDrag);
+  view.addEventListener("pointercancel", endDrag);
+  view.addEventListener("wheel", (e) => { if (source) { e.preventDefault(); setZoom(zoom * Math.exp(-e.deltaY * 0.0015)); } }, { passive: false });
+  view.addEventListener("keydown", (e) => {
+    if (!source) return;
+    const step = 0.02 / zoom;
+    const move = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[e.key];
+    if (!move) return;
+    e.preventDefault();
+    cx -= move[0]; cy -= move[1];
+    show();
+  });
+  slider.addEventListener("input", () => setZoom(parseFloat(slider.value)));
+  fileInput.addEventListener("change", () => { if (fileInput.files[0]) load(fileInput.files[0]); });
+
+  const body = h("div", { class: "modal photo-dialog", role: "dialog", "aria-modal": "true", "aria-label": `Photo of ${item.name}` },
+    h("h3", {}, `Photo of ${item.name}`),
+    view,
+    h("p", { class: "muted small" }, "Drag to move the photo. Scroll or use the slider to zoom. You can also drop or paste an image."),
+    h("label", { class: "zoom-row" }, "Zoom", slider),
+    h("div", { class: "modal-actions photo-actions" },
+      mini.photo ? h("button", {
+        type: "button", class: "icon danger", onclick: async () => {
+          if (await guarded(() => api("DELETE", `/api/minis/${mini.id}/photo`))) { toast("Removed the photo"); modal.close(true); await loadCollection(); }
+        },
+      }, "Remove photo") : null,
+      h("button", { type: "button", class: "icon", onclick: () => fileInput.click() }, source ? "Choose another…" : "Choose photo…"),
+      h("button", { type: "button", class: "icon", onclick: () => modal.close(false) }, "Cancel"),
+      saveButton));
+
+  saveButton.addEventListener("click", async () => {
+    const crop = { zoom, cx, cy };
+    const saved = await guarded(() => (source.dataUrl
+      ? api("PUT", `/api/minis/${mini.id}/photo`, { image: source.dataUrl, width: source.width, height: source.height, ...crop })
+      : api("PATCH", `/api/minis/${mini.id}/photo`, crop)));
+    if (saved) { toast("Saved the photo"); modal.close(true); await loadCollection(); }
+  });
+  body.addEventListener("dragover", (e) => e.preventDefault());
+  body.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const file = imageFileFrom(e.dataTransfer?.files);
+    if (file) load(file);
+  });
+  pasteHandler = (e) => {
+    const file = imageFileFrom(e.clipboardData?.files);
+    if (file) { e.preventDefault(); load(file); }
+  };
+  document.addEventListener("paste", pasteHandler);
+  modal = openModal(body, () => document.removeEventListener("paste", pasteHandler));
+  show();
+  if (firstFile) load(firstFile);
+  if (source) view.focus();
+}
+
+// The picture area of a card: the mini's own photo when it has one, else the unit's line art. Dropping an
+// image file on it opens the photo dialog with that file. Clicking it opens the unit's details.
+function miniPhotoFrame(item, mini) {
+  const frame = h("div", {
+    class: "photo clickable" + (mini.photo ? " has-photo" : item.has_art ? " has-art" : ""),
+    onclick: () => showUnitDetail(item.unit_uuid, mini),
+  }, mini.photo ? miniPhotoImage(mini) : artImage(item), mini.painted ? paintBadge() : null);
+  frame.addEventListener("dragover", (e) => {
+    if ([...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) { e.preventDefault(); frame.classList.add("drop-target"); }
+  });
+  frame.addEventListener("dragleave", () => frame.classList.remove("drop-target"));
+  frame.addEventListener("drop", (e) => {
+    frame.classList.remove("drop-target");
+    const file = imageFileFrom(e.dataTransfer?.files);
+    if (!file) return;
+    e.preventDefault();
+    openPhotoDialog(item, mini, file);
+  });
+  return frame;
 }
 
 function artImage(item) {
@@ -1717,6 +2093,7 @@ function setupControls() {
 (async function init() {
   await guarded(async () => {
     state.meta = await api("GET", "/api/meta");
+    await loadCompanyLogos();
     loadPrefs();
     setupControls();
     setupViewControls();

@@ -1,3 +1,9 @@
+/* Atkinson Hyperlegible, for long reading text. Made by the Braille Institute so that look-alike letters differ.
+   The files are in web/fonts with their license (SIL Open Font License 1.1). */
+@font-face { font-family: "Atkinson Hyperlegible"; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/atkinson-hyperlegible-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible"; font-style: italic; font-weight: 400; font-display: swap; src: url("fonts/atkinson-hyperlegible-latin-400-italic.woff2") format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible"; font-style: normal; font-weight: 700; font-display: swap; src: url("fonts/atkinson-hyperlegible-latin-700-normal.woff2") format("woff2"); }
+
 /* Dark only. Panels, tabs and motion follow the look of COMP/CON, redrawn from scratch. */
 :root {
   color-scheme: dark;
@@ -24,12 +30,13 @@
   --fade: 0.25s;
   /* COMP/CON sets body text in Helvetica and numbers/stat text in Consolas. Both come from the system here. */
   --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --reading: "Atkinson Hyperlegible", "Segoe UI", Verdana, sans-serif; /* long text: lore and quirks */
   --mono: Consolas, "Cascadia Mono", "SF Mono", Menlo, monospace;
 }
 
 * { box-sizing: border-box; }
 
-html { zoom: 0.9; } /* whole site 10% smaller; change this one number to adjust */
+html { zoom: 0.8; } /* whole site 20% smaller; change this one number to adjust */
 
 body {
   margin: 0;
@@ -268,9 +275,15 @@ body.view-cards .table-wrap { display: none; }
   text-transform: uppercase; border-bottom: 1px solid var(--border);
   background: repeating-linear-gradient(135deg, rgba(127, 127, 127, 0.12) 0 10px, rgba(127, 127, 127, 0.04) 10px 20px);
 }
-/* The artwork is black line art, so it sits on white in either color scheme. */
-.mini-card .photo.has-art { background: #fff; position: relative; overflow: hidden; }
+/* The artwork is black line art on white. Inverting it and blending with "screen" drops the white
+   and leaves light lines on the card, so there is no white box around the portrait. */
+.mini-card .photo.has-art { background: var(--surface); position: relative; overflow: hidden; }
+.mini-card .photo.has-art img, .detail .photo.has-art img { filter: invert(1); mix-blend-mode: screen; }
 .mini-card .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 8px; box-sizing: border-box; }
+/* A mini's own photo: no filter, and no padding. The crop sets its size and position (see cropGeometry in app.js). */
+.photo.has-photo { background: var(--surface); position: relative; overflow: hidden; }
+.photo.has-photo img.mini-photo { inset: auto; max-width: none; padding: 0; object-fit: fill; filter: none; mix-blend-mode: normal; user-select: none; }
+.mini-card .photo.drop-target { outline: 2px dashed var(--accent); outline-offset: -4px; }
 /* minmax(0, 1fr) keeps the one column as wide as the card. Without it a wide child, like the variant
    picker, stretches the column past the card and gets clipped. */
 .mini-card .card-body { padding: 9px 11px 11px; display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
@@ -342,29 +355,56 @@ button.unit-link:hover { background: none; filter: none; color: var(--accent); t
 /* Unit detail panel */
 .modal-backdrop:has(.detail) { padding: 12px; place-items: stretch; }
 .modal.detail { width: 100%; height: 100%; max-height: none; overflow-y: auto; padding: 24px 28px; }
-.detail-body { display: block; } /* weapons and quirks first, lore underneath */
-.detail-top { margin-bottom: 4px; }
 .mini-card .photo.clickable { cursor: pointer; }
-.detail-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; margin-bottom: 14px; }
-.detail-head h2 { display: block; background: none; clip-path: none; margin: 0 0 6px; padding: 0; font-size: 32px; letter-spacing: 1px; color: #fff; }
-.detail-head h2::before { content: none; }
-.detail-head p { margin: 0; font-size: 17px; }
+.detail-head { display: flex; justify-content: flex-end; margin-bottom: 14px; }
 .detail .muted { color: #cdc2c5; }
 .detail .small { font-size: 15px; }
-.detail-top { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; align-items: start; }
+/* The panel is a bigger version of the card on the left, with the full stats and text beside it. */
+.detail-layout { display: grid; grid-template-columns: minmax(300px, 440px) minmax(0, 1fr); gap: 32px; align-items: start; }
+.detail-main { min-width: 0; }
+.detail-main > .detail-section:first-child { margin-top: 0; }
+.detail-card { position: sticky; top: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .detail .photo {
   aspect-ratio: 1 / 1; display: grid; place-items: center; position: relative; overflow: hidden;
-  color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; border: 1px solid var(--border);
+  color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; border-bottom: 1px solid var(--border);
 }
-.detail .photo.has-art { background: #fff; }
+.detail .photo.has-art { background: var(--surface); }
 .detail .photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; padding: 8px; box-sizing: border-box; }
+/* The strip and name at card proportions, scaled up. */
+.detail-card .copy-strip { padding: 12px 18px; gap: 5px; }
+.detail-card .copy-strip .strip-line { font-size: 18px; min-height: 28px; gap: 12px; }
+.detail-card .copy-strip .strip-line.sub { font-size: 14px; }
+.detail-card .copy-strip .faction-icon, .detail-card .copy-strip .faction-icon.company-logo { width: 28px; height: 28px; }
+.detail-card-body { padding: 16px 18px 18px; display: grid; gap: 6px; }
+.detail-card-body h2 { margin: 0; background: none; clip-path: none; padding: 0; font-size: 30px; line-height: 1.15; letter-spacing: 0; color: #fff; }
+.detail-card-body h2::before { content: none; }
+.detail-card-meta { color: var(--muted); font-size: 16px; }
+.detail-card-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.detail-card-pills .tag-pill, .detail-card-pills .material-static { font-size: 13px; padding: 2px 10px; }
+.material-static { display: inline-block; border: 1px solid var(--warn); border-radius: 10px; color: var(--warn); }
+.detail-card .copy-note-line { font-size: 15px; margin-top: 4px; }
 .stats { display: grid; gap: 4px; }
 .stat { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .stat .k { color: #cdc2c5; font-size: 15px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; align-self: center; }
 .stat .v { font-family: var(--mono); font-size: 19px; }
 .detail-section { margin-top: 24px; }
 .detail-section h3 { margin: 0 0 12px; font-size: 16px; letter-spacing: 3px; text-transform: uppercase; color: #ff6b80; }
-.detail-section p { margin: 0 0 15px; font-size: 19px; line-height: 1.7; max-width: 80ch; }
+/* Lore sections fold up. Closed, a section is one line: its title and a short line about what it covers. */
+.lore-blurb { min-width: 0; font-family: var(--reading); font-size: 17px; color: var(--muted); }
+details.lore { margin-top: 0; border-top: 1px solid var(--border); }
+details.lore:last-of-type { border-bottom: 1px solid var(--border); }
+details.lore > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 16px; padding: 14px 0; }
+details.lore > summary::-webkit-details-marker { display: none; }
+details.lore > summary::before { content: "▸"; flex: none; width: 1em; color: #ff6b80; font-size: 16px; transition: transform var(--fade); }
+details.lore[open] > summary::before { transform: rotate(90deg); }
+details.lore > summary:hover .lore-title { color: #fff; }
+details.lore > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lore-title { flex: none; font-size: 16px; letter-spacing: 3px; text-transform: uppercase; color: #ff6b80; }
+details.lore > p { padding-left: calc(1em + 16px); }
+.detail-section p strong.lead { font-weight: 700; color: #fff; }
+/* Long text is easier to follow in a readable face, a bit larger, with lines about 60 characters wide and
+   air between paragraphs. The screen is zoomed to 80%, so 22px reads at about 17px. */
+.detail-section p { margin: 0 0 1.1em; font-family: var(--reading); font-size: 22px; line-height: 1.75; max-width: 62ch; color: #ebe6e7; text-wrap: pretty; hyphens: none; }
 table.weapons { width: 100%; font-family: var(--mono); font-size: 18px; }
 table.weapons th { font-size: 15px; color: #cdc2c5; }
 table.weapons th, table.weapons td { padding: 6px 8px; }
@@ -375,10 +415,57 @@ table.weapons th:first-child, table.weapons td:first-child { padding-left: 0; }
 tr.copy-line td.sel-cell { border-left: 2px solid var(--accent); }
 tr.all-named { opacity: 0.6; }
 /* A named mini on its card: a crimson strip under the photo, then the note and tag. */
-.copy-strip { background: var(--crimson); color: #fff; padding: 6px 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; line-height: 1.35; overflow-wrap: anywhere; }
-.copy-strip small { display: block; font-weight: 400; letter-spacing: 0.08em; opacity: 0.85; }
-/* A light backing keeps dark logos readable on the crimson strip and on the dark table. */
-.faction-icon { width: 16px; height: 16px; object-fit: contain; vertical-align: -3px; margin-right: 6px; padding: 1px; background: rgba(255, 255, 255, 0.92); border-radius: 2px; }
+.copy-strip { background: var(--strip, var(--crimson)); color: var(--strip-text, #fff); padding: 6px 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; line-height: 1.35; overflow-wrap: anywhere; }
+/* Every strip is the same height: the company (or faction) on a bold line, the faction under it. A name too
+   long for its line is cut off with an ellipsis and shows in full on hover. Each line is an icon slot beside
+   its text, so the company and faction icons share one size and line up with each other. */
+.mini-card .copy-strip { box-sizing: border-box; height: 72px; display: flex; flex-direction: column; justify-content: center; gap: 3px; overflow: hidden; }
+.copy-strip .strip-line { display: flex; align-items: center; gap: 8px; min-height: 18px; font-size: 13px; }
+.copy-strip .strip-line.sub { font-size: 11px; font-weight: 400; letter-spacing: 0.08em; opacity: 0.85; }
+/* The big line wraps to two lines before it is cut off. The faction line stays on one. */
+.copy-strip .strip-text { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; line-height: 1.3; overflow-wrap: anywhere; }
+.copy-strip .strip-line.sub .strip-text { display: block; text-overflow: ellipsis; white-space: nowrap; -webkit-line-clamp: unset; line-clamp: unset; }
+/* The mech's name, first line under the photo or strip. */
+.mini-card .card-title { margin-bottom: 1px; }
+.mini-card .card-title .unit-link { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; font-size: 16px; font-weight: 700; background: none; border: 0; padding: 0; cursor: pointer; }
+.mini-card .card-title .unit-link:hover { text-decoration: underline; filter: none; background: none; color: var(--accent); }
+.copy-strip .faction-icon, .copy-strip .faction-icon.company-logo { flex: none; width: 18px; height: 18px; margin: 0; vertical-align: baseline; }
+/* No backing box. A thin light halo keeps dark logos readable on the crimson strip and on the dark table. */
+.faction-icon { width: 16px; height: 16px; object-fit: contain; vertical-align: -3px; margin-right: 6px; filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.9)); }
+/* A logo you saved for a company. A JPEG cannot be see-through, so it is multiplied into what is behind it,
+   which turns its white background into the strip's color. */
+.faction-icon.company-logo { width: 20px; height: 20px; vertical-align: -5px; }
+.faction-icon.company-logo.opaque { filter: none; mix-blend-mode: multiply; }
+.logo-find { align-self: end; justify-self: start; }
+.logo-picker { max-width: 560px; }
+.logo-picker h3 { margin: 0 0 12px; }
+.logo-current { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.logo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.logo-card { margin: 0; display: grid; gap: 8px; justify-items: center; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); text-align: center; font-size: 12px; }
+/* The photo dialog: a square window onto the photo that you drag, with the zoom below it. */
+.photo-dialog { max-width: 420px; }
+.photo-dialog h3 { margin: 0 0 12px; }
+.crop-view { position: relative; width: 100%; aspect-ratio: 1 / 1; overflow: hidden; border: 1px solid var(--border); cursor: grab; touch-action: none; user-select: none;
+  background: repeating-linear-gradient(135deg, rgba(127, 127, 127, 0.12) 0 10px, rgba(127, 127, 127, 0.04) 10px 20px); }
+.crop-view.dragging { cursor: grabbing; }
+.crop-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.crop-img { position: absolute; max-width: none; pointer-events: none; object-fit: fill; }
+.crop-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; color: var(--muted); cursor: default; }
+.zoom-row { display: flex; align-items: center; gap: 10px; margin: 8px 0 14px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; }
+.zoom-row input { flex: 1; min-width: 0; }
+.photo-actions { flex-wrap: wrap; }
+.photo-actions .danger { margin-right: auto; }
+.color-section { display: grid; gap: 10px; margin: 4px 0 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.color-section h4 { margin: 0; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.color-preview { min-height: 36px; display: flex; flex-direction: column; justify-content: center; border-radius: 2px; transition: background var(--fade), color var(--fade); }
+.swatches { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
+.swatch { aspect-ratio: 1 / 1; padding: 0; border: 2px solid transparent; border-radius: 2px; cursor: pointer; }
+.swatch[aria-pressed="true"] { border-color: #fff; }
+.color-row { display: flex; gap: 8px; align-items: center; }
+.color-input { width: 40px; height: 30px; padding: 0; border: 1px solid var(--border); background: none; border-radius: 2px; cursor: pointer; }
+.hex-input { flex: 1; min-width: 0; font-family: var(--mono); text-transform: uppercase; }
+.logo-thumb { width: 120px; height: 120px; object-fit: contain; background: #fff; border-radius: 2px; }
+.logo-current .logo-thumb { width: 48px; height: 48px; }
 .copy-note-line { font-style: italic; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .tag-pill { display: inline-block; padding: 1px 8px; font-size: 11px; border: 1px solid var(--accent); border-radius: 10px; color: var(--accent); }
 .material-control { margin: 4px 0; }
@@ -445,7 +532,8 @@ body.has-bulkbar { padding-bottom: 84px; }
 .bulk-menu-head { padding: 6px 12px 4px; color: var(--muted); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
 .bulk-menu-item { text-align: left; border: 0; border-radius: 2px; background: none; padding: 8px 12px; font-size: 13px; }
 .bulk-menu-item:hover, .bulk-menu-item:focus-visible { background: var(--crimson); filter: none; outline: none; }
-@media (max-width: 520px) { .detail-top { grid-template-columns: minmax(0, 1fr); } .detail .photo { max-width: 220px; } .modal.detail { padding: 16px; } }
+@media (max-width: 860px) { .detail-layout { grid-template-columns: minmax(0, 1fr); } .detail-card { position: static; max-width: 440px; } }
+@media (max-width: 520px) { .modal.detail { padding: 16px; } }
 @keyframes fade-in { from { opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {

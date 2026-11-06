@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import (
     art, availability, boxes, builder, catalog, collection, colors, config, copies, db, details, export,
-    formations, forces, logos, photos,
+    formations, forces, logos, palette, photos,
 )
 from .kinds import KIND_LABELS, KINDS
 
@@ -292,6 +292,10 @@ def delete_mini_photo(conn, query, body, copy_id):
     return {"removed": True}
 
 
+def get_faction_colors(conn, query, body):
+    return palette.faction_colors(conn, cache=art_cache_dir)
+
+
 def get_company_colors(conn, query, body):
     return colors.list_all(conn)
 
@@ -411,6 +415,7 @@ ROUTES = [
     ("PUT", r"/api/minis/(\d+)/photo", put_mini_photo),
     ("PATCH", r"/api/minis/(\d+)/photo", patch_mini_photo),
     ("DELETE", r"/api/minis/(\d+)/photo", delete_mini_photo),
+    ("GET", r"/api/faction-colors", get_faction_colors),
     ("GET", r"/api/company-colors", get_company_colors),
     ("PUT", r"/api/company-colors", put_company_color),
     ("DELETE", r"/api/company-colors", delete_company_color),

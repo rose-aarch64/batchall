@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS copies (
     tag TEXT NOT NULL DEFAULT '',
     faction TEXT NOT NULL DEFAULT '',
     company TEXT NOT NULL DEFAULT '',
+    material TEXT NOT NULL DEFAULT '',
     painted INTEGER NOT NULL DEFAULT 0 CHECK (painted IN (0, 1)),
     box TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -140,7 +141,7 @@ def _migrate(conn):
         with conn:
             conn.execute("ALTER TABLE box_items ADD COLUMN card_units TEXT NOT NULL DEFAULT '[]'")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(copies)")}
-    for column in ("faction", "company"):  # empty until a named mini is given one
+    for column in ("faction", "company", "material"):  # empty until a mini is given one
         if column not in columns:
             with conn:
                 conn.execute(f"ALTER TABLE copies ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
@@ -154,6 +155,36 @@ def _migrate(conn):
     if "art" not in columns:  # filled in by the next `catalog import`
         with conn:
             conn.execute("ALTER TABLE units ADD COLUMN art TEXT")
+    _add_plain_mini_rows(conn)
+
+
+def _add_plain_mini_rows(conn):
+    """Give each entry one ``copies`` row for every owned mini that has none yet.
+
+    Databases from before minis were rows only had a row per named mini. The missing ones are added as
+    plain rows, with the entry's remaining painted count spread over them. Nothing is ever removed.
+    """
+    entries = conn.execute(
+        "SELECT c.id, c.qty, c.painted, "
+        "(SELECT COUNT(*) FROM copies WHERE collection_id = c.id) AS minis, "
+        "(SELECT COUNT(*) FROM copies WHERE collection_id = c.id AND painted = 1) AS minis_painted "
+        "FROM collection c"
+    ).fetchall()
+    with conn:
+        for e in entries:
+            missing = e["qty"] - e["minis"]
+            if missing <= 0:
+                continue
+            painted = max(0, min(e["painted"] - e["minis_painted"], missing))
+            conn.executemany(
+                "INSERT INTO copies (collection_id, note, painted) VALUES (?, '', ?)",
+                [(e["id"], 1 if i < painted else 0) for i in range(missing)],
+            )
+            conn.execute(
+                "UPDATE collection SET painted = (SELECT COUNT(*) FROM copies "
+                "WHERE collection_id = collection.id AND painted = 1) WHERE id = ?",
+                (e["id"],),
+            )
 
 
 def get_meta(conn, key, default=None):

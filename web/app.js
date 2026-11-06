@@ -11,9 +11,13 @@ const state = {
   view: "table",
   compact: false,
   collapsed: new Set(),
-  editingCopy: null, // id of the named copy whose fields are open for editing
+  editingCopy: null, // id of the mini whose fields are open for editing
   tray: { units: new Map(), forceId: null },
 };
+
+// What a mini can be made of. The material box also takes any other brand or process typed in.
+const MATERIALS = ["CGL Plastic", "Resin", "Metal"];
+const NO_MATERIAL = "No Material"; // first in every list, standing for a mini with no material set
 
 const $ = (id) => document.getElementById(id);
 
@@ -257,6 +261,7 @@ function currentFilters() {
     tag: $("filter-tag").value.trim(),
     copy_faction: $("filter-copy-faction").value.trim(),
     copy_company: $("filter-copy-company").value.trim(),
+    material: $("filter-material").value.trim(),
     painted_only: $("filter-painted").checked,
   };
 }
@@ -272,6 +277,7 @@ function filterQuery() {
   if (f.tag) p.set("tag", f.tag);
   if (f.copy_faction) p.set("copy_faction", f.copy_faction);
   if (f.copy_company) p.set("copy_company", f.copy_company);
+  if (f.material) p.set("material", f.material);
   if (f.painted_only) p.set("painted_only", "1");
   return p.toString();
 }
@@ -294,6 +300,12 @@ async function loadBoxes() {
   const options = (rows) => rows.map((r) => h("option", { value: r.value }, `${r.copies} ${r.copies === 1 ? "copy" : "copies"}`));
   $("copy-faction-options").replaceChildren(...options(factions));
   $("copy-company-options").replaceChildren(...options(companies));
+  // The usual materials are always offered. Any other the user has typed is listed after them.
+  const used = await api("GET", "/api/copy-materials");
+  const counts = new Map(used.map((r) => [r.value, r.copies]));
+  const names = [...MATERIALS, ...used.map((r) => r.value).filter((v) => !MATERIALS.includes(v))];
+  $("material-options").replaceChildren(...names.map((name) =>
+    h("option", { value: name }, counts.has(name) ? `${counts.get(name)} ${counts.get(name) === 1 ? "mini" : "minis"}` : "")));
 }
 
 // ---------- suggestions ----------
@@ -550,7 +562,7 @@ const SORT_CHOICES = {
   tons: { key: "tons", dir: -1 },
   year: { key: "year", dir: 1 },
 };
-const GROUP_BY_CHOICES = ["box", "era", "avail", "faction", "weight", "kind", "tech", "role", "painted"];
+const GROUP_BY_CHOICES = ["box", "era", "avail", "faction", "weight", "kind", "tech", "role", "painted", "material"];
 
 function loadPrefs() {
   try {
@@ -594,27 +606,28 @@ function emptyMessage() {
     : "Your collection is empty. Use Add units to search the catalog, or Import to paste a list.";
 }
 
-// ---------- named copies in the roster ----------
-// Each named copy shows as its own row or card. The unnamed minis of that unit stay together as a stack.
+// ---------- minis in the roster ----------
+// Every owned mini is its own row or card, named or not. Any mini can carry a tag, a material, a box and a
+// paint state. A mini with a note, faction or company is a named copy and also gets a crimson strip.
 
-const stackQty = (item) => item.qty - item.copies.length;
-// An entry's painted count covers every mini. The unnamed stack's share is what is left after the painted copies.
-const stackPainted = (item) => Math.max(0, Math.min(item.painted - item.copies.filter((c) => c.painted).length, stackQty(item)));
-
-// The tag, mini faction and mini company boxes narrow by named copy. They match part of the text, ignoring case.
-function copyFilters() {
+// The tag, mini faction, mini company and material boxes narrow by mini. They match part of the text, ignoring case.
+function miniFilters() {
   const lower = (id) => $(id).value.trim().toLowerCase();
-  return { tag: lower("filter-tag"), faction: lower("filter-copy-faction"), company: lower("filter-copy-company") };
+  return {
+    tag: lower("filter-tag"), faction: lower("filter-copy-faction"), company: lower("filter-copy-company"),
+    material: lower("filter-material"),
+  };
 }
 
-const copyFilterActive = () => Object.values(copyFilters()).some(Boolean);
+const miniFilterActive = () => Object.values(miniFilters()).some(Boolean);
 
-// With any of those filters on, only the copies that match all of them are shown, and the stack is left out.
-function visibleCopies(item) {
-  const f = copyFilters();
-  if (!copyFilterActive()) return item.copies;
-  return item.copies.filter((c) =>
-    c.tag.toLowerCase().includes(f.tag) && c.faction.toLowerCase().includes(f.faction) && c.company.toLowerCase().includes(f.company));
+// With any of those filters on, only the minis that match all of them are shown.
+function visibleMinis(item) {
+  const f = miniFilters();
+  if (!miniFilterActive()) return item.minis;
+  return item.minis.filter((m) =>
+    m.tag.toLowerCase().includes(f.tag) && m.faction.toLowerCase().includes(f.faction) &&
+    m.company.toLowerCase().includes(f.company) && m.material.toLowerCase().includes(f.material));
 }
 
 // What a named mini is called on its card: the company, with the faction under it. A copy that has
@@ -625,7 +638,7 @@ function copyHeading(copy) {
 }
 
 const copyLine = (copy) => [copy.company, copy.faction].filter(Boolean).join(" · ") || copy.note;
-const copyName = (copy) => copy.note || copy.company || copy.faction;
+const copyName = (copy) => copy.note || copy.company || copy.faction || "mini";
 
 async function changeCopy(run) {
   await guarded(run);
@@ -653,18 +666,19 @@ function copyEditor(item, copy) {
     field("Faction", "faction", { list: "copy-faction-options" }),
     field("Company", "company", { list: "copy-company-options" }),
     field("Tag", "tag", { list: "tag-options" }),
+    field("Material", "material", { list: "material-options", placeholder: "e.g. Metal, Resin" }),
     field("Box", "box", { "data-suggest": "box", "data-entry": item.id, autocomplete: "off", placeholder: item.box || "none" }),
     h("label", { class: "fld inline" }, "Painted", h("input", {
       type: "checkbox", checked: copy.painted, "aria-label": "Painted",
       onchange: save("painted", (e) => e.target.checked, (e) => { e.target.checked = copy.painted; }),
     })),
-    h("button", {
+    copy.named ? h("button", {
       type: "button", class: "icon danger remove-name", title: "Remove this name", "aria-label": `Remove name: ${copyName(copy)}`,
       onclick: () => unnameCopy(copy),
-    }, "Remove this name"));
+    }, "Remove this name") : null);
 }
 
-// Where a copy's box shows: its own, or the entry's when it has none.
+// Where a mini's box shows: its own, or the entry's when it has none.
 const copyBox = (item, copy) => copy.box || item.box;
 
 async function setCopy(copy, patch) {
@@ -680,6 +694,28 @@ async function finishEditing() {
   await loadCollection(); // refreshes the suggestions and any filter the edit changed
 }
 
+// One more mini of the same variant, in the entry's box.
+async function addAnother(item) {
+  await guarded(async () => {
+    await api("POST", "/api/collection", { unit_uuid: item.unit_uuid, qty: 1 });
+    await loadCollection();
+  });
+}
+
+async function removeMini(item, mini) {
+  const last = item.qty <= 1;
+  const message = last
+    ? `Remove ${item.name} from your collection? It is your last one, so it will also leave any saved forces.`
+    : `Remove this ${item.name} from your collection?`;
+  if (!(await confirmDialog(message, { confirmLabel: "Remove", danger: true }))) return;
+  await guarded(async () => {
+    await api("DELETE", `/api/minis/${mini.id}`);
+    if (last) state.tray.units.delete(item.id);
+    await loadCollection();
+    await loadForces();
+  });
+}
+
 function copyActions(item, copy, quickPaint = false) {
   if (state.editingCopy === copy.id) {
     return h("button", { class: "icon primary", title: "Finish editing", onclick: finishEditing }, "Done");
@@ -691,108 +727,99 @@ function copyActions(item, copy, quickPaint = false) {
     quickPaint ? " " : null,
     h("button", { class: "icon", title: "Switch this one mini to another variant", onclick: (e) => startSwap(item, swapCell(e.currentTarget), copy) }, "Variant"),
     " ",
-    h("button", { class: "icon", title: "Edit this named mini", "aria-label": `Edit ${copyName(copy)}`, onclick: () => { state.editingCopy = copy.id; renderRoster(); } }, "✎"),
+    h("button", { class: "icon", title: "Add another mini of this variant", onclick: () => addAnother(item) }, "+ another"),
+    " ",
+    h("button", { class: "icon", title: "Edit this mini", "aria-label": `Edit ${copyName(copy)}`, onclick: () => { state.editingCopy = copy.id; renderRoster(); } }, "✎"),
+    " ",
+    h("button", { class: "icon danger", title: "Remove this mini from the collection", "aria-label": `Remove ${item.name}`, onclick: () => removeMini(item, copy) }, "×"),
   ];
 }
 
-function buildCopyRow(item, copy) {
-  const editing = state.editingCopy === copy.id;
-  return h("tr", { class: "copy-line" },
+// Set a mini's material from its card without opening the editor. A mini with none shows a "+ Material"
+// button, and one with a material shows it as a pill. Either opens a dropdown, which closes again when it
+// loses focus or Escape is pressed. A material typed in the editor that is not one of the usual ones
+// stays in the list so it keeps showing.
+function materialControl(mini) {
+  const names = !mini.material || MATERIALS.includes(mini.material) ? MATERIALS : [...MATERIALS, mini.material];
+  const holder = h("div", { class: "material-control" });
+  const show = () => holder.replaceChildren(h("button", {
+    type: "button", class: mini.material ? "material-pill" : "icon add-material",
+    title: mini.material ? "Change this mini's material" : "Add a material",
+    "aria-label": mini.material ? `Material of ${copyName(mini)}: ${mini.material}. Change it` : `Add a material to ${copyName(mini)}`,
+    onclick: open,
+  }, mini.material || "+ Material"));
+  const open = () => {
+    const select = h("select", {
+      class: "material-select", "aria-label": `Material of ${copyName(mini)}`,
+      onchange: (e) => setCopy(mini, { material: e.target.value }),
+      onblur: show,
+      onkeydown: (e) => { if (e.key === "Escape") show(); },
+    },
+      h("option", { value: "", selected: !mini.material }, NO_MATERIAL),
+      ...names.map((name) => h("option", { value: name, selected: name === mini.material }, name)));
+    holder.replaceChildren(select);
+    select.focus();
+    try { select.showPicker(); } catch { /* the list opens on the next click where the browser does not allow this */ }
+  };
+  show();
+  return holder;
+}
+
+function buildMiniRow(item, mini) {
+  const editing = state.editingCopy === mini.id;
+  const detail = mini.named ? copyLine(mini) : "";
+  return h("tr", { class: mini.named ? "copy-line" : "mini-line" },
     h("td", {}, nameLink(item),
-      editing ? copyEditor(item, copy)
-        : h("div", { class: "copy-label", title: copy.note || null }, copyLine(copy), " ", tagPill(copy))),
+      editing ? copyEditor(item, mini)
+        : (detail || mini.tag) ? h("div", { class: "copy-label", title: mini.note || null }, detail, detail && mini.tag ? " " : null, tagPill(mini)) : null),
     h("td", {}, kindLabel(item)),
     h("td", {}, h("input", {
-      type: "text", class: "box-input", value: copy.box, "data-suggest": "box", "data-entry": item.id, autocomplete: "off",
-      placeholder: item.box || "none", "aria-label": `Box for ${copyName(copy)}`,
-      onchange: (e) => setCopy(copy, { box: e.target.value }),
+      type: "text", class: "box-input", value: mini.box, "data-suggest": "box", "data-entry": item.id, autocomplete: "off",
+      placeholder: item.box || "none", "aria-label": `Box for ${copyName(mini)}`,
+      onchange: (e) => setCopy(mini, { box: e.target.value }),
     })),
     h("td", { class: "num" }, item.tons == null ? "" : Number(item.tons).toString()),
     h("td", { class: "num" }, item.bv),
-    h("td", { class: "num" }, 1),
-    h("td", { class: "num" }, h("input", {
-      type: "checkbox", checked: copy.painted, "aria-label": `Painted: ${copyName(copy)}`,
-      onchange: (e) => setCopy(copy, { painted: e.target.checked }),
+    h("td", {}, h("input", {
+      type: "text", class: "box-input", value: mini.material, list: "material-options", autocomplete: "off",
+      placeholder: "none", "aria-label": `Material of ${copyName(mini)}`,
+      onchange: (e) => setCopy(mini, { material: e.target.value }),
     })),
-    h("td", { class: "actions" }, copyActions(item, copy)));
+    h("td", { class: "num" }, h("input", {
+      type: "checkbox", checked: mini.painted, "aria-label": `Painted: ${copyName(mini)}`,
+      onchange: (e) => setCopy(mini, { painted: e.target.checked }),
+    })),
+    h("td", { class: "actions" }, copyActions(item, mini)));
 }
 
-// A named mini's card has a crimson strip under the photo naming its company and faction. The note and
-// tag show below the stats, and the pencil swaps them for the editing boxes.
-function buildCopyCard(item, copy) {
-  const editing = state.editingCopy === copy.id;
-  const heading = copyHeading(copy);
-  const noteLine = (copy.company || copy.faction) && copy.note ? h("div", { class: "copy-note-line" }, copy.note) : null;
-  return h("article", { class: "mini-card is-copy" },
+// A mini's card shows the photo, the unit's stats, its material, tag and box, and a brush badge when painted.
+// A named mini also has a crimson strip under the photo naming its company and faction, with its note below
+// the stats. The pencil swaps the details for the editing boxes.
+function buildMiniCard(item, mini) {
+  const editing = state.editingCopy === mini.id;
+  const heading = mini.named ? copyHeading(mini) : null;
+  const noteLine = mini.named && (mini.company || mini.faction) && mini.note ? h("div", { class: "copy-note-line" }, mini.note) : null;
+  return h("article", { class: "mini-card" + (mini.named ? " is-copy" : "") },
     h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) },
-      artImage(item), copy.painted ? paintBadge() : null),
-    h("div", { class: "copy-strip" }, h("span", {}, heading.main), heading.sub ? h("small", {}, heading.sub) : null),
+      artImage(item), mini.painted ? paintBadge() : null),
+    heading ? h("div", { class: "copy-strip" }, h("span", {}, heading.main), heading.sub ? h("small", {}, heading.sub) : null) : null,
     h("div", { class: "card-body" },
       h("div", { class: "card-name" }, nameLink(item)),
       h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),
-      editing ? copyEditor(item, copy) : [noteLine, tagPill(copy) ? h("div", {}, tagPill(copy)) : null],
-      copyBox(item, copy) ? h("div", { class: "card-box" }, copyBox(item, copy)) : null,
-      h("div", { class: "card-actions" }, copyActions(item, copy, true))));
+      editing ? copyEditor(item, mini) : [materialControl(mini), noteLine, tagPill(mini) ? h("div", {}, tagPill(mini)) : null],
+      copyBox(item, mini) ? h("div", { class: "card-box" }, copyBox(item, mini)) : null,
+      h("div", { class: "card-actions" }, copyActions(item, mini, true))));
 }
 
-// Grouped by box, an entry sits in every box its minis are in: the entry's box for the unnamed stack,
-// and each named copy's own box. `box` is a group's box name ("" for no box), or null when not
-// grouping by box, which shows the whole entry.
-const copyBoxName = (item, copy) => copyBox(item, copy) || "";
-const stackBoxes = (item) => (item.copies.length && stackQty(item) <= 0 ? [] : [item.box || ""]);
-const boxesOf = (item) => [...new Set([...stackBoxes(item), ...item.copies.map((c) => copyBoxName(item, c))])];
-const inBox = (box, name) => box == null || name === box;
-const copiesIn = (item, box) => visibleCopies(item).filter((c) => inBox(box, copyBoxName(item, c)));
-// The unnamed stack's row sits in the entry's box. With every mini named it is kept (at zero) only where a copy shares that box.
-const stackIn = (item, box) => box == null || (item.box || "") === box;
+// Grouped by box or by material, an entry sits in every group its minis are in, and each group shows only
+// those minis. `scope` is a test of one mini for the group being drawn, or null to show the whole entry.
+const miniBoxName = (item, mini) => copyBox(item, mini) || "";
+const boxesOf = (item) => [...new Set(item.minis.map((m) => miniBoxName(item, m)))];
+const materialsOf = (item) => [...new Set(item.minis.map((m) => m.material))];
+const minisIn = (item, scope) => visibleMinis(item).filter((m) => !scope || scope(item, m));
 
-function rowsFor(item, box = null) {
-  const named = copiesIn(item, box).map((c) => buildCopyRow(item, c));
-  const stack = !copyFilterActive() && stackIn(item, box) && (box == null || boxesOf(item).includes(box));
-  return stack ? [buildRow(item), ...named] : named;
-}
-
-function cardsFor(item, box = null) {
-  const named = copiesIn(item, box).map((c) => buildCopyCard(item, c));
-  const stack = !copyFilterActive() && stackQty(item) > 0 && stackIn(item, box);
-  return stack ? [buildCard(item), ...named] : named;
-}
-
-function buildRow(item) {
-  const named = item.copies.length;
-  const qty = h("input", {
-    type: "number", min: 0, value: stackQty(item), "aria-label": `Quantity of ${item.name}${named ? " not named" : ""}`,
-    onchange: (e) => updateEntry(item.id, { qty: Number(e.target.value) + named }),
-  });
-  const painted = h("input", {
-    type: "number", min: 0, max: stackQty(item), value: stackPainted(item), "aria-label": `Painted ${item.name}${named ? " not named" : ""}`,
-    // The entry's count also covers the painted copies, which are not in this box.
-    onchange: (e) => updateEntry(item.id, { painted: Number(e.target.value) + item.copies.filter((c) => c.painted).length }),
-  });
-  const nameCell = h("td", {}, nameLink(item), named ? h("span", { class: "muted small" }, " unnamed") : null);
-  return h("tr", { class: named && !stackQty(item) ? "all-named" : null },
-    nameCell,
-    h("td", {}, kindLabel(item)),
-    h("td", {}, h("input", {
-      type: "text", class: "box-input", value: item.box, "data-suggest": "box", "data-entry": item.id,
-      autocomplete: "off", placeholder: "none", "aria-label": `Box for ${item.name}`,
-      onchange: (e) => updateEntry(item.id, { box: e.target.value }),
-    })),
-    h("td", { class: "num" }, item.tons == null ? "" : Number(item.tons).toString()),
-    h("td", { class: "num" }, item.bv),
-    h("td", { class: "num" }, qty),
-    h("td", { class: "num" }, painted),
-    h("td", { class: "actions" },
-      h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray"),
-      " ",
-      h("button", { class: "icon", title: "Switch this mini to another variant", onclick: () => startSwap(item, nameCell) }, "Variant"),
-      " ",
-      h("button", {
-        class: "icon danger", title: "Remove from collection", "aria-label": `Remove ${item.name}`,
-        onclick: () => removeEntry(item),
-      }, "×")),
-  );
-}
+const rowsFor = (item, scope = null) => minisIn(item, scope).map((m) => buildMiniRow(item, m));
+const cardsFor = (item, scope = null) => minisIn(item, scope).map((m) => buildMiniCard(item, m));
 
 // How the grouped view splits the collection. Each choice names the groups an entry belongs to
 // (several for faction groups, since a mini can be fielded by more than one) and a fixed order
@@ -803,7 +830,7 @@ const PAINT_ORDER = ["Unpainted", "Partly painted", "Fully painted"];
 const PRE_ERA = "Before the first era";
 const NO_GROUP = {
   box: "No box", era: "Unknown year", avail: "No availability data", faction: "Unaffiliated", weight: "Unknown", kind: "Unknown",
-  tech: "Unknown", role: "No role", painted: "Unpainted",
+  tech: "Unknown", role: "No role", painted: "Unpainted", material: NO_MATERIAL,
 };
 
 // An era is named by the year the unit debuted. Years before the first era get their own group.
@@ -846,6 +873,7 @@ const GROUPERS = {
   tech: { of: (i) => [i.tech_base], order: null },
   role: { of: (i) => [i.role], order: null },
   painted: { of: (i) => [paintOf(i)], order: () => PAINT_ORDER },
+  material: { of: (i) => materialsOf(i).map((m) => m || null), order: () => [NO_MATERIAL, ...MATERIALS] },
 };
 
 const isGrouped = () => state.groupOn;
@@ -866,7 +894,7 @@ function groupsOf(items) {
   }
   const order = by.order ? by.order() : [];
   const rank = (name) => {
-    if (name === none) return Infinity;
+    if (name === none && !order.includes(none)) return Infinity; // the "none of the above" group is last unless the order places it
     const i = order.indexOf(name);
     return i < 0 ? order.length : i;
   };
@@ -879,24 +907,30 @@ function collapseKey(name) {
   return state.groupBy === "box" ? name : `${state.groupBy}:${name}`;
 }
 
-// The box a group stands for when grouping by box ("" for the no-box group), else null.
-const groupBox = (name) => (state.groupBy === "box" ? (name === NO_GROUP.box ? "" : name) : null);
-
-// What an entry puts in a group. Grouped by box, that is only the minis in that box.
-function share(item, box) {
-  if (box == null) return { models: item.qty, painted: Math.min(item.painted, item.qty) };
-  const inStack = stackBoxes(item).includes(box) && (item.box || "") === box;
-  const copies = item.copies.filter((c) => copyBoxName(item, c) === box);
-  return {
-    models: (inStack ? stackQty(item) : 0) + copies.length,
-    painted: (inStack ? stackPainted(item) : 0) + copies.filter((c) => c.painted).length,
-  };
+// The test a group applies to each of an entry's minis, or null when the group holds whole entries.
+// Grouped by box or by material, a group holds only the minis in that box or made of that material.
+function groupScope(name) {
+  if (state.groupBy === "box") {
+    const box = name === NO_GROUP.box ? "" : name;
+    return (item, mini) => miniBoxName(item, mini) === box;
+  }
+  if (state.groupBy === "material") {
+    const material = name === NO_GROUP.material ? "" : name;
+    return (item, mini) => mini.material === material;
+  }
+  return null;
 }
 
-function totals(list, box = null) {
+// What an entry puts in a group: its minis that pass the group's test, or all of them.
+function share(item, scope) {
+  const minis = scope ? item.minis.filter((m) => scope(item, m)) : item.minis;
+  return { models: minis.length, painted: minis.filter((m) => m.painted).length };
+}
+
+function totals(list, scope = null) {
   const sums = { models: 0, painted: 0, bv: 0 };
   for (const item of list) {
-    const s = share(item, box);
+    const s = share(item, scope);
     sums.models += s.models;
     sums.painted += s.painted;
     sums.bv += item.bv * s.models;
@@ -905,7 +939,7 @@ function totals(list, box = null) {
 }
 
 function groupHeader(name, list, collapsed) {
-  const t = totals(list, groupBox(name));
+  const t = totals(list, groupScope(name));
   const pct = t.models ? Math.round((100 * t.painted) / t.models) : 0;
   const toggle = () => {
     if (collapsed) state.collapsed.delete(collapseKey(name)); else state.collapsed.add(collapseKey(name));
@@ -955,23 +989,6 @@ function artImage(item) {
   });
 }
 
-function buildCard(item) {
-  const nameEl = h("div", { class: "card-name" }, nameLink(item));
-  const allPainted = stackQty(item) > 0 && stackPainted(item) >= stackQty(item);
-  return h("article", { class: "mini-card" },
-    // Mouse shortcut to the details. Keyboard users get the same thing from the name button.
-    h("div", { class: "photo clickable" + (item.has_art ? " has-art" : ""), onclick: () => showUnitDetail(item.unit_uuid, item.id) },
-      artImage(item), allPainted ? paintBadge("All painted") : null),
-    h("div", { class: "card-body" },
-      nameEl,
-      h("div", { class: "card-meta" }, `${kindLabel(item)} · ${item.tons ?? "?"}t · ${item.bv} BV`),
-      h("div", { class: "card-foot" }, h("span", {}, `×${stackQty(item)}`), h("span", {}, `${stackPainted(item)}/${stackQty(item)} painted`)),
-      item.box ? h("div", { class: "card-box" }, item.box) : null,
-      h("div", { class: "card-actions" },
-        h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray"),
-        h("button", { class: "icon", title: "Switch this mini to another variant", onclick: () => startSwap(item, nameEl) }, "Variant"))));
-}
-
 function cardGrid() {
   let grid = $("card-grid");
   if (!grid) {
@@ -989,7 +1006,7 @@ function renderTable(items) {
     for (const [name, list] of groupsOf(items)) {
       const collapsed = state.collapsed.has(collapseKey(name));
       body.append(h("tr", { class: "group-row" }, h("td", { colspan: 8 }, groupHeader(name, list, collapsed))));
-      if (!collapsed) body.append(...list.flatMap((item) => rowsFor(item, groupBox(name))));
+      if (!collapsed) body.append(...list.flatMap((item) => rowsFor(item, groupScope(name))));
     }
   } else {
     body.append(...items.flatMap((item) => rowsFor(item)));
@@ -1012,7 +1029,7 @@ function renderCards(items) {
     const collapsed = state.collapsed.has(collapseKey(name));
     const head = h("div", { class: "card-group-head" }, groupHeader(name, list, collapsed));
     // replaceChildren turns a null into the text "null", so a collapsed group adds only its header.
-    return collapsed ? [head] : [head, h("div", { class: "card-grid" }, list.flatMap((item) => cardsFor(item, groupBox(name))))];
+    return collapsed ? [head] : [head, h("div", { class: "card-grid" }, list.flatMap((item) => cardsFor(item, groupScope(name))))];
   }));
 }
 
@@ -1085,18 +1102,8 @@ function setupViewControls() {
   });
 }
 
-async function updateEntry(id, patch) {
-  const ok = await guarded(async () => {
-    await api("PATCH", `/api/collection/${id}`, patch);
-    await loadCollection();
-    await loadForces();
-    return true;
-  });
-  if (!ok) await loadCollection(); // a refused change (like a quantity below the named copies) resets the field
-}
-
-// Switch a mini to another variant of the same chassis. A plastic mini can stand for any variant.
-async function startSwap(item, cell, copy = null) {
+// Switch one mini to another variant of the same chassis. A plastic mini can stand for any variant.
+async function startSwap(item, cell, copy) {
   await guarded(async () => {
     const variants = await api("GET", `/api/collection/${item.id}/variants`);
     if (variants.length < 2) { toast(`No other variants of ${item.chassis} in the catalog`); return; }
@@ -1121,38 +1128,17 @@ async function startSwap(item, cell, copy = null) {
   });
 }
 
-async function swapVariant(item, variant, copy = null) {
-  if (copy) { // one named mini moves; the rest of the entry stays put
-    await guarded(async () => {
-      await api("POST", `/api/copies/${copy.id}/swap`, { unit_uuid: variant.uuid });
-      toast(`Switched ${copyName(copy)} to ${variant.name}`);
-      state.editingCopy = null;
-      await loadCollection();
-      if (!itemById(item.id)) state.tray.units.delete(item.id); // the old entry goes when its last mini moves
-      await loadForces();
-    });
-    renderRoster();
-    return;
-  }
-  const owned = state.items.find((i) => i.unit_uuid === variant.uuid && i.id !== item.id);
-  if (owned && !(await confirmDialog(`You already own ${variant.name}. Merge these into it?`, { confirmLabel: "Merge" }))) { renderRoster(); return; }
+async function swapVariant(item, variant, copy) {
+  // One mini moves to the other variant; the rest of the entry stays put.
   await guarded(async () => {
-    await api("POST", `/api/collection/${item.id}/swap`, { unit_uuid: variant.uuid });
-    toast(`Switched to ${variant.name}`);
-    state.tray.units.delete(item.id);
+    await api("POST", `/api/copies/${copy.id}/swap`, { unit_uuid: variant.uuid });
+    toast(`Switched ${item.name} to ${variant.name}`);
+    state.editingCopy = null;
     await loadCollection();
+    if (!itemById(item.id)) state.tray.units.delete(item.id); // the old entry goes when its last mini moves
     await loadForces();
   });
-}
-
-async function removeEntry(item) {
-  if (!(await confirmDialog(`Remove ${item.name} from your collection? It will also leave any saved forces.`, { confirmLabel: "Remove", danger: true }))) return;
-  await guarded(async () => {
-    await api("DELETE", `/api/collection/${item.id}`);
-    state.tray.units.delete(item.id);
-    await loadCollection();
-    await loadForces();
-  });
+  renderRoster();
 }
 
 // ---------- adding units and boxes ----------
@@ -1487,7 +1473,7 @@ function setupControls() {
 
   let filterTimer = null;
   const refilter = () => { clearTimeout(filterTimer); filterTimer = setTimeout(loadCollection, 200); };
-  for (const id of ["filter-q", "filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company", "filter-kind", "filter-era", "filter-faction", "filter-painted"]) {
+  for (const id of ["filter-q", "filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company", "filter-material", "filter-kind", "filter-era", "filter-faction", "filter-painted"]) {
     $(id).addEventListener("input", refilter);
   }
   $("toggle-add").addEventListener("click", () => {

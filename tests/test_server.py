@@ -125,9 +125,33 @@ class ServerTests(unittest.TestCase):
 
         status, copy = self.request("PATCH", f"/api/copies/{copy['id']}", {"company": "Gamma Company"})
         self.assertEqual((status, copy["faction"], copy["company"]), (200, "Wolf's Dragoons", "Gamma Company"))
-        status, body = self.request("PATCH", f"/api/copies/{copy['id']}", {"note": "", "faction": "", "company": ""})
+        status, body = self.request("POST", f"/api/collection/{copy['collection_id']}/copies", {"note": "", "faction": ""})
         self.assertEqual(status, 400)
         self.assertIn("needs a note", body["error"])
+
+    def test_every_mini_has_material_and_can_be_edited_and_removed_over_api(self):
+        status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 3})
+        self.assertEqual(len(entry["minis"]), 3)
+        first, second = entry["minis"][0], entry["minis"][1]
+
+        status, mini = self.request("PATCH", f"/api/copies/{first['id']}", {"material": "Resin", "tag": "Trial"})
+        self.assertEqual((status, mini["material"], mini["named"]), (200, "Resin", False))
+
+        status, items = self.request("GET", "/api/collection?material=resin")
+        self.assertEqual([i["name"] for i in items], ["Atlas AS7-D"])
+        status, items = self.request("GET", "/api/collection?material=metal")
+        self.assertEqual(items, [])
+        status, listed = self.request("GET", "/api/copy-materials")
+        self.assertEqual(listed, [{"value": "Resin", "copies": 1}])
+
+        status, body = self.request("DELETE", f"/api/minis/{second['id']}")
+        self.assertEqual((status, body), (200, {"removed": second["id"]}))
+        status, items = self.request("GET", "/api/collection")
+        self.assertEqual(items[0]["qty"], 2)
+        self.assertEqual([m["id"] for m in items[0]["minis"]][0], first["id"])
+
+        status, body = self.request("DELETE", "/api/minis/99999")
+        self.assertEqual(status, 400)
 
     def test_copy_paint_box_and_variant_over_api(self):
         conn = db.connect(self.db_path)

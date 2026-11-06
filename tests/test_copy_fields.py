@@ -65,11 +65,12 @@ class CopyFieldTests(unittest.TestCase):
         copy = copies.update(self.conn, copy["id"], note="", faction="Kell Hounds")
         self.assertEqual((copy["note"], copy["faction"]), ("", "Kell Hounds"))
 
-    def test_update_cannot_blank_note_faction_and_company_together(self):
+    def test_blanking_note_faction_and_company_turns_it_back_into_a_plain_mini(self):
         copy = copies.add(self.conn, self.id, "note", faction="Kell Hounds")
-        with self.assertRaises(copies.CopyError):
-            copies.update(self.conn, copy["id"], note="", faction="")
-        self.assertEqual(copies.get(self.conn, copy["id"])["faction"], "Kell Hounds")
+        copies.update(self.conn, copy["id"], note="", faction="")
+        self.assertFalse(copies.get(self.conn, copy["id"])["named"])
+        self.assertEqual(copies.list_for(self.conn, self.id), [])
+        self.assertEqual(collection.get(self.conn, self.id)["qty"], 3)
 
     def test_faction_and_company_values_list_distinct_with_counts(self):
         copies.add(self.conn, self.id, "a", faction="Kell Hounds", company="Delta Lance")

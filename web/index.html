@@ -31,6 +31,8 @@
           <datalist id="copy-faction-options"></datalist>
           <input id="filter-copy-company" type="search" list="copy-company-options" autocomplete="off" placeholder="Mini company" aria-label="Filter by the company a named mini is painted for" class="box-filter">
           <datalist id="copy-company-options"></datalist>
+          <input id="filter-material" type="search" list="material-options" autocomplete="off" placeholder="Material" aria-label="Filter by what a mini is made of" class="box-filter">
+          <datalist id="material-options"></datalist>
           <select id="filter-kind" aria-label="Unit type"><option value="">All types</option></select>
           <select id="filter-era" aria-label="Era"><option value="">Any era</option></select>
           <select id="filter-faction" aria-label="Faction"><option value="">Any faction</option></select>
@@ -73,6 +75,7 @@
               <option value="tech">Tech base</option>
               <option value="role">Role</option>
               <option value="painted">Paint status</option>
+              <option value="material">Material</option>
             </select>
           </div>
           <div id="group-actions" class="group" role="group" aria-label="Groups" hidden>
@@ -102,7 +105,7 @@
                 <th data-sort="box">Box</th>
                 <th data-sort="tons" class="num">Tons</th>
                 <th data-sort="bv" class="num">BV</th>
-                <th class="num">Qty</th>
+                <th>Material</th>
                 <th class="num">Painted</th>
                 <th></th>
               </tr>

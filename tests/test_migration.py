@@ -36,6 +36,45 @@ class MigrationTests(unittest.TestCase):
                 self.assertEqual((row["note"], row["painted"], row["box"]), ("gloss", 0, ""))
                 conn.close()
 
+    def test_entries_get_a_plain_row_for_each_mini_without_a_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "old.db")
+            old = sqlite3.connect(path)
+            old.executescript(
+                """
+                CREATE TABLE collection (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    unit_uuid TEXT NOT NULL UNIQUE, qty INTEGER NOT NULL DEFAULT 1,
+                    painted INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '',
+                    box TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE copies (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    collection_id INTEGER NOT NULL REFERENCES collection(id) ON DELETE CASCADE,
+                    note TEXT NOT NULL, tag TEXT NOT NULL DEFAULT '', faction TEXT NOT NULL DEFAULT '',
+                    company TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+                INSERT INTO collection (unit_uuid, qty, painted) VALUES ('named', 3, 2);
+                INSERT INTO copies (collection_id, note) VALUES (1, 'gloss');
+                INSERT INTO collection (unit_uuid, qty, painted) VALUES ('plain', 4, 3);
+                INSERT INTO collection (unit_uuid, qty, painted) VALUES ('none', 0, 0);
+                """
+            )
+            old.commit()
+            old.close()
+
+            def summary(conn):
+                return [
+                    tuple(r) for r in conn.execute(
+                        "SELECT c.unit_uuid, c.qty, c.painted, COUNT(p.id), COALESCE(SUM(p.painted), 0), "
+                        "COALESCE(SUM(p.note != ''), 0) "
+                        "FROM collection c LEFT JOIN copies p ON p.collection_id = c.id "
+                        "GROUP BY c.id ORDER BY c.id"
+                    )
+                ]
+
+            expected = [("named", 3, 2, 3, 2, 1), ("plain", 4, 3, 4, 3, 0), ("none", 0, 0, 0, 0, 0)]
+            for _ in range(2):  # the second open must not add rows again
+                conn = db.connect(path)
+                self.assertEqual(summary(conn), expected)
+                conn.close()
+
     def test_database_without_box_column_is_upgraded_and_keeps_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "old.db")

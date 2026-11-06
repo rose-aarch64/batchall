@@ -94,6 +94,7 @@ def get_collection(conn, query, body):
         tag=_first(query, "tag"),
         copy_faction=_first(query, "copy_faction"),
         copy_company=_first(query, "copy_company"),
+        material=_first(query, "material"),
     )
 
 
@@ -109,7 +110,7 @@ def post_copy(conn, query, body, entry_id):
     return copies.add(
         conn, int(entry_id), body.get("note"), tag=body.get("tag", ""),
         faction=body.get("faction", ""), company=body.get("company", ""),
-        painted=bool(body.get("painted")), box=body.get("box", ""),
+        painted=bool(body.get("painted")), box=body.get("box", ""), material=body.get("material", ""),
     )
 
 
@@ -117,8 +118,13 @@ def patch_copy(conn, query, body, copy_id):
     return copies.update(
         conn, int(copy_id), note=body.get("note"), tag=body.get("tag"),
         faction=body.get("faction"), company=body.get("company"),
-        painted=body.get("painted"), box=body.get("box"),
+        painted=body.get("painted"), box=body.get("box"), material=body.get("material"),
     )
+
+
+def delete_mini(conn, query, body, copy_id):
+    copies.delete_mini(conn, int(copy_id))
+    return {"removed": int(copy_id)}
 
 
 def post_copy_swap(conn, query, body, copy_id):
@@ -142,6 +148,10 @@ def get_copy_factions(conn, query, body):
 
 def get_copy_companies(conn, query, body):
     return copies.list_values(conn, "company")
+
+
+def get_copy_materials(conn, query, body):
+    return copies.list_values(conn, "material")
 
 
 def post_collection(conn, query, body):
@@ -305,6 +315,8 @@ ROUTES = [
     ("GET", r"/api/copy-tags", get_copy_tags),
     ("GET", r"/api/copy-factions", get_copy_factions),
     ("GET", r"/api/copy-companies", get_copy_companies),
+    ("GET", r"/api/copy-materials", get_copy_materials),
+    ("DELETE", r"/api/minis/(\d+)", delete_mini),
     ("POST", r"/api/collection", post_collection),
     ("PATCH", r"/api/collection/(\d+)", patch_collection),
     ("DELETE", r"/api/collection/(\d+)", delete_collection),

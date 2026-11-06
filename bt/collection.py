@@ -7,11 +7,16 @@ import re
 from . import availability
 from .catalog import unit_dict
 
-COLLECTION_SELECT = """
+# Every owned mini is a copies row. A row is a named copy when it carries a note, faction or company.
+NAMED = "(note != '' OR faction != '' OR company != '')"
+# A row carries details when it has any text of its own. Quantity changes never drop such a mini.
+DETAILED = "(note != '' OR tag != '' OR faction != '' OR company != '' OR material != '' OR box != '')"
+
+COLLECTION_SELECT = f"""
 SELECT c.id AS id, c.unit_uuid, c.qty, c.painted, c.notes, c.box,
        u.chassis, u.model, u.kind, u.type, u.subtype, u.tons, u.weight_class, u.bv, u.pv,
        u.year, u.tech_base, u.role, u.squad_size, u.walk, u.jump, u.mul_id, u.uuid, u.art,
-       (SELECT COUNT(*) FROM copies WHERE collection_id = c.id) AS copy_count
+       (SELECT COUNT(*) FROM copies WHERE collection_id = c.id AND {NAMED}) AS copy_count
 FROM collection c JOIN units u ON u.uuid = c.unit_uuid
 """
 
@@ -27,17 +32,23 @@ def _row(row):
 
 
 def _attach_copies(conn, items):
-    """Give each row the named copies it carries, oldest first."""
+    """Give each row its minis, oldest first, and the named copies among them.
+
+    ``minis`` lists every owned mini with its own fields. ``copies`` is the subset that carries a
+    note, faction or company.
+    """
     by_entry = {}
     for c in conn.execute(
-        "SELECT id, collection_id, note, tag, faction, company, painted, box FROM copies ORDER BY id"
+        "SELECT id, collection_id, note, tag, faction, company, material, painted, box FROM copies ORDER BY id"
     ):
         by_entry.setdefault(c["collection_id"], []).append({
             "id": c["id"], "note": c["note"], "tag": c["tag"], "faction": c["faction"],
-            "company": c["company"], "painted": bool(c["painted"]), "box": c["box"],
+            "company": c["company"], "material": c["material"], "painted": bool(c["painted"]), "box": c["box"],
+            "named": bool(c["note"] or c["faction"] or c["company"]),
         })
     for item in items:
-        item["copies"] = by_entry.get(item["id"], [])
+        item["minis"] = by_entry.get(item["id"], [])
+        item["copies"] = [m for m in item["minis"] if m["named"]]
     return items
 
 
@@ -107,9 +118,9 @@ def _like(term):
 
 def list_collection(
     conn, q=None, kind=None, painted_only=False, faction=None, era=None, tech_base=None, box=None,
-    tag=None, copy_faction=None, copy_company=None,
+    tag=None, copy_faction=None, copy_company=None, material=None,
 ):
-    """List owned units, optionally narrowed by text, kind, paint, faction/era, tech base, box or copy tag.
+    """List owned units, optionally narrowed by text, kind, paint, faction/era, tech base, box, copy tag or material.
 
     ``faction`` is who fields a unit in the MekBay data. ``copy_faction`` and ``copy_company`` are the
     force a named mini is painted for, matched as part of the text. When both are given, one named
@@ -128,7 +139,7 @@ def list_collection(
         )
         params.append(_like(tag.strip()))
     on_one_copy = []
-    for column, term in (("faction", copy_faction), ("company", copy_company)):
+    for column, term in (("faction", copy_faction), ("company", copy_company), ("material", material)):
         if term and term.strip():
             on_one_copy.append(f"cp.{column} LIKE ? ESCAPE '\\'")
             params.append(_like(term.strip()))
@@ -168,6 +179,54 @@ def _clamp(qty, painted):
     return qty, painted
 
 
+def recount(conn, entry_id):
+    """Set an entry's ``qty`` and ``painted`` from its mini rows. They always match the rows."""
+    conn.execute(
+        "UPDATE collection SET "
+        "qty = (SELECT COUNT(*) FROM copies WHERE collection_id = :id), "
+        "painted = (SELECT COUNT(*) FROM copies WHERE collection_id = :id AND painted = 1) "
+        "WHERE id = :id",
+        {"id": entry_id},
+    )
+
+
+def set_minis(conn, entry_id, qty, painted):
+    """Make the entry own ``qty`` minis, ``painted`` of them painted, by adding or dropping plain rows.
+
+    Named minis are never dropped or repainted here, so the caller must keep ``qty`` at or above the
+    named count and ``painted`` at or above the painted named count. Plain minis are interchangeable:
+    surplus rows with the highest ids go first, and paint is moved only when the count has to change.
+    """
+    plain = [
+        dict(r) for r in conn.execute(
+            f"SELECT id, painted FROM copies WHERE collection_id = ? AND NOT {DETAILED} ORDER BY id", (entry_id,)
+        )
+    ]
+    named = conn.execute(
+        f"SELECT COUNT(*) AS n, COALESCE(SUM(painted), 0) AS p FROM copies WHERE collection_id = ? AND {DETAILED}",
+        (entry_id,),
+    ).fetchone()
+    want_plain = max(0, qty - named["n"])
+    # A named unpainted mini takes a slot that cannot be painted, so painted can't exceed the plain rows.
+    want_painted = max(0, min(painted - named["p"], want_plain))
+    for extra in plain[want_plain:]:
+        conn.execute("DELETE FROM copies WHERE id = ?", (extra["id"],))
+    plain = plain[:want_plain]
+    for _ in range(want_plain - len(plain)):
+        cur = conn.execute("INSERT INTO copies (collection_id, note) VALUES (?, '')", (entry_id,))
+        plain.append({"id": cur.lastrowid, "painted": 0})
+    have = sum(p["painted"] for p in plain)
+    if have > want_painted:
+        flip = [p for p in reversed(plain) if p["painted"]][: have - want_painted]
+        value = 0
+    else:
+        flip = [p for p in plain if not p["painted"]][: want_painted - have]
+        value = 1
+    for p in flip:
+        conn.execute("UPDATE copies SET painted = ? WHERE id = ?", (value, p["id"]))
+    recount(conn, entry_id)
+
+
 def add(conn, unit_uuid, qty=1, painted=0, notes="", box=""):
     """Add a unit, or increase the quantity if it is already owned.
 
@@ -184,15 +243,17 @@ def add(conn, unit_uuid, qty=1, painted=0, notes="", box=""):
         if existing:
             new_qty, new_painted = _clamp(existing["qty"] + qty, existing["painted"] + painted)
             conn.execute(
-                "UPDATE collection SET qty = ?, painted = ?, notes = ?, box = ? WHERE id = ?",
-                (new_qty, new_painted, notes or existing["notes"], box or existing["box"], existing["id"]),
+                "UPDATE collection SET notes = ?, box = ? WHERE id = ?",
+                (notes or existing["notes"], box or existing["box"], existing["id"]),
             )
+            set_minis(conn, existing["id"], new_qty, new_painted)
             return get(conn, existing["id"])
         new_qty, new_painted = _clamp(qty, painted)
         cur = conn.execute(
-            "INSERT INTO collection (unit_uuid, qty, painted, notes, box) VALUES (?,?,?,?,?)",
-            (unit_uuid, new_qty, new_painted, notes, box),
+            "INSERT INTO collection (unit_uuid, qty, painted, notes, box) VALUES (?,0,0,?,?)",
+            (unit_uuid, notes, box),
         )
+        set_minis(conn, cur.lastrowid, new_qty, new_painted)
         return get(conn, cur.lastrowid)
 
 
@@ -202,25 +263,26 @@ def update(conn, collection_id, qty=None, painted=None, notes=None, box=None):
     new_painted = current["painted"] if painted is None else painted
     new_qty, new_painted = _clamp(new_qty, new_painted)
     named = conn.execute(
-        "SELECT COUNT(*) FROM copies WHERE collection_id = ?", (collection_id,)
+        f"SELECT COUNT(*) FROM copies WHERE collection_id = ? AND {DETAILED}", (collection_id,)
     ).fetchone()[0]
     if new_qty < named:
-        raise CollectionError(f"{named} copies are named, so remove a named copy before lowering the quantity")
+        raise CollectionError(
+            f"{named} minis have a name, tag, material or box of their own, so remove one before lowering the quantity"
+        )
     named_painted = conn.execute(
-        "SELECT COUNT(*) FROM copies WHERE collection_id = ? AND painted = 1", (collection_id,)
+        f"SELECT COUNT(*) FROM copies WHERE collection_id = ? AND {DETAILED} AND painted = 1", (collection_id,)
     ).fetchone()[0]
     new_painted = max(new_painted, named_painted)  # painted minis that are named still count as painted
     with conn:
         conn.execute(
-            "UPDATE collection SET qty = ?, painted = ?, notes = ?, box = ? WHERE id = ?",
+            "UPDATE collection SET notes = ?, box = ? WHERE id = ?",
             (
-                new_qty,
-                new_painted,
                 current["notes"] if notes is None else notes,
                 current["box"] if box is None else box.strip(),
                 collection_id,
             ),
         )
+        set_minis(conn, collection_id, new_qty, new_painted)
     return get(conn, collection_id)
 
 
@@ -286,13 +348,13 @@ def swap(conn, collection_id, unit_uuid):
         if target is None:
             conn.execute("UPDATE collection SET unit_uuid = ? WHERE id = ?", (unit_uuid, collection_id))
             return get(conn, collection_id)
-        qty, painted = _clamp(target["qty"] + current["qty"], target["painted"] + current["painted"])
         notes = "; ".join(n for n in (target["notes"], current["notes"]) if n)
         conn.execute(
-            "UPDATE collection SET qty = ?, painted = ?, notes = ?, box = ? WHERE id = ?",
-            (qty, painted, notes, target["box"] or current["box"], target["id"]),
+            "UPDATE collection SET notes = ?, box = ? WHERE id = ?",
+            (notes, target["box"] or current["box"], target["id"]),
         )
         conn.execute("UPDATE copies SET collection_id = ? WHERE collection_id = ?", (target["id"], collection_id))
+        recount(conn, target["id"])
         for force in conn.execute(
             "SELECT force_id, qty FROM force_units WHERE collection_id = ?", (collection_id,)
         ).fetchall():

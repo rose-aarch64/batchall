@@ -78,6 +78,22 @@ class RateLimiterTests(unittest.TestCase):
             self.limiter.record_failure(("handle", str(i)))
         self.assertLessEqual(len(self.limiter._entries), 10000)
 
+    def test_cap_work_per_call_is_bounded(self):
+        for i in range(10000):
+            self.limiter.record_failure(("handle", str(i)))
+        examined = []
+        original = self.limiter._is_idle
+
+        def counting(entry, now):
+            examined.append(1)
+            return original(entry, now)
+
+        self.limiter._is_idle = counting
+        for i in range(10000, 10200):
+            self.limiter.record_failure(("handle", str(i)))
+        self.assertLessEqual(len(self.limiter._entries), 10000)
+        self.assertLessEqual(len(examined), 200 * 8)
+
     def test_concurrent_failures_are_not_lost(self):
         limiter = RateLimiter(max_failures=1000, clock=self.clock)
         self.limiter = limiter

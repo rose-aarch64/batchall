@@ -10,8 +10,10 @@ import math
 import threading
 import time
 from collections import OrderedDict, deque
+from itertools import islice
 
 MAX_KEYS = 10_000
+TRIM_PROBES = 8
 
 
 class _Entry:
@@ -76,8 +78,16 @@ class RateLimiter:
         return not entry.failures and entry.locked_until <= now
 
     def _trim(self, now):
-        for key in [k for k, e in self._entries.items()
-                    if self._is_idle(e, now)]:
-            del self._entries[key]
+        # Work per call is bounded: only the few least recently touched
+        # entries are examined. An idle one is evicted if found, otherwise
+        # the oldest.
         while len(self._entries) > MAX_KEYS:
-            self._entries.popitem(last=False)
+            victim = None
+            for key, entry in islice(self._entries.items(), TRIM_PROBES):
+                if self._is_idle(entry, now):
+                    victim = key
+                    break
+            if victim is None:
+                self._entries.popitem(last=False)
+            else:
+                del self._entries[victim]

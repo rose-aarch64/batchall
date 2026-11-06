@@ -150,6 +150,7 @@ def load(conn, source_dir=None):
                 _int_or_none(u.get("walk")),
                 _int_or_none(u.get("jump")),
                 _art_path(u),
+                u.get("c3"),
             )
         )
 
@@ -169,8 +170,8 @@ def load(conn, source_dir=None):
         conn.executemany("INSERT INTO unit_details (uuid, specs, lore) VALUES (?,?,?)", detail_rows)
         conn.executemany(
             "INSERT OR REPLACE INTO units (uuid, mul_id, chassis, model, kind, type, subtype, tons, "
-            "weight_class, bv, pv, year, tech_base, role, squad_size, walk, jump, art) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "weight_class, bv, pv, year, tech_base, role, squad_size, walk, jump, art, c3) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             unit_rows,
         )
         conn.executemany("INSERT INTO factions (id, name, grp, img) VALUES (?,?,?,?)", faction_rows)

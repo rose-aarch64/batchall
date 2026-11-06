@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS units (
     squad_size INTEGER,
     walk INTEGER,
     jump INTEGER,
-    art TEXT
+    art TEXT,
+    c3 TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_units_kind ON units(kind);
 CREATE INDEX IF NOT EXISTS idx_units_mul ON units(mul_id);
@@ -220,6 +221,9 @@ def _migrate(conn):
     if "art" not in columns:  # filled in by the next `catalog import`
         with conn:
             conn.execute("ALTER TABLE units ADD COLUMN art TEXT")
+    if "c3" not in columns:  # the C3 network a unit carries; filled in by the next `catalog import`
+        with conn:
+            conn.execute("ALTER TABLE units ADD COLUMN c3 TEXT")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(factions)")}
     if "img" not in columns:  # NULL until `catalog import` or the app's start-up fills it from factions.json
         with conn:

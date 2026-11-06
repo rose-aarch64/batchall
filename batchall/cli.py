@@ -56,6 +56,8 @@ def _render_build(result):
         scope.append("painted only")
     if pool.get("proxy"):
         scope.append("proxying variants")
+    if pool.get("c3"):
+        scope.append(f"{pool['c3']} only")
     head = f"{result['formation'] or 'custom'} ({result['size']} units)"
     if scope:
         head += " | " + ", ".join(scope)
@@ -276,6 +278,7 @@ def cmd_build(args, conn):
         box=args.box,
         proxy=args.proxy,
         include=_csv_ints(args.include),
+        c3=args.c3,
     )
     if args.text:
         print(_render_build(result))
@@ -407,6 +410,7 @@ def make_parser():
     b.add_argument("--box", help="only use units whose box label contains this text")
     b.add_argument("--weights", help="JSON {collection_id: weight} or @file; higher is favored")
     b.add_argument("--exclude", help="comma-separated collection ids to leave out")
+    b.add_argument("--c3", help="only units carrying this network: C3, C3i, Nova CEWS or Naval C3")
     b.add_argument(
         "--include",
         help="comma-separated collection ids that must be in the build; repeat an id for more copies",

@@ -18,7 +18,7 @@ DETAILED = (
 COLLECTION_SELECT = """
 SELECT c.id AS id, c.unit_uuid, c.qty, c.painted, c.notes, c.box,
        u.chassis, u.model, u.kind, u.type, u.subtype, u.tons, u.weight_class, u.bv, u.pv,
-       u.year, u.tech_base, u.role, u.squad_size, u.walk, u.jump, u.mul_id, u.uuid, u.art
+       u.year, u.tech_base, u.role, u.squad_size, u.walk, u.jump, u.mul_id, u.uuid, u.art, u.c3
 FROM collection c JOIN units u ON u.uuid = c.unit_uuid
 """
 

@@ -54,6 +54,7 @@ def make_pool(
     kinds=None,
     box=None,
     proxy=False,
+    c3=None,
 ):
     """Collect usable units from the collection.
 
@@ -64,8 +65,14 @@ def make_pool(
 
     With ``proxy``, every owned mini may stand in for any variant of its chassis and kind.
     The tech base, faction and era filters apply to each variant instead of the owned one.
+
+    ``c3`` keeps only units that carry that network ("C3", "C3i", "Nova CEWS", "Naval C3"),
+    matched ignoring case.
     """
     box = (box or "").strip().lower()
+    c3 = (c3 or "").strip().lower()
+    if c3 and conn.execute("SELECT 1 FROM units WHERE c3 IS NOT NULL LIMIT 1").fetchone() is None:
+        raise BuildError("the catalog has no C3 data yet; run `catalog import` once to load it")
     faction_row = availability.resolve_faction(conn, faction)
     era_row = availability.resolve_era(conn, era)
     allowed = availability.available_mul_ids(
@@ -101,6 +108,8 @@ def make_pool(
         for cand in candidates:
             if tech_base and cand["tech_base"] != tech_base:
                 continue
+            if c3 and (cand.get("c3") or "").lower() != c3:
+                continue
             if allowed is not None:
                 if cand["mul_id"] is None:
                     if not proxy:  # a proxy mini only counts when it has no variant left at all
@@ -132,6 +141,7 @@ def make_pool(
         "box": box or None,
         "painted_only": bool(painted_only),
         "proxy": bool(proxy),
+        "c3": c3 or None,
         "excluded_unknown_availability": unknown_availability,
         "pool_units": len(pool),
         "pool_models": sum(p.copies for p in pool),
@@ -459,6 +469,7 @@ def build(
     box=None,
     proxy=False,
     include=None,
+    c3=None,
 ):
     """Build one or more distinct forces from the collection. Returns a result dict.
 
@@ -468,7 +479,10 @@ def build(
     ``include`` is a list of collection ids that must be in every build (an id listed twice
     asks for two copies). They count toward the size, the mix and the BV target, and ignore
     the faction, era, tech base, box and painted filters. They are always fielded as the
-    variant owned, even with ``proxy``.
+    variant owned, even with ``proxy``. With ``c3`` they must carry that network.
+
+    ``c3`` keeps the search to units carrying that network, so every unit in the build can
+    join one ("C3i" for an Improved C3 network).
     """
     fm = formations.get_formation(formation) if formation else None
     final_size = size if size else (fm.size if fm else None)
@@ -478,6 +492,9 @@ def build(
     final_mix = formations.merge_mix(base_mix, mix)
 
     found = _included_entries(conn, include, int(final_size))
+    for entry, _ in found:
+        if c3 and (entry.get("c3") or "").lower() != c3.strip().lower():
+            raise BuildError(f"{entry['name']} (id {entry['id']}) does not carry {c3}")
     included_bv = sum(entry["bv"] * n for entry, n in found)
     included_count = sum(n for _, n in found)
     if included_bv > int(target_bv):
@@ -497,6 +514,7 @@ def build(
         kinds=kinds,
         box=box,
         proxy=proxy,
+        c3=c3,
     )
     if found:  # the included minis are spoken for, so the search cannot use them again
         taken = {entry["id"]: n for entry, n in found}

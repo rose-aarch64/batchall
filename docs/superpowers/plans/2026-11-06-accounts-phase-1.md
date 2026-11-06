@@ -1,5 +1,7 @@
 # Accounts, Phase 1 Implementation Plan
 
+> **Superseded on 2026-11-06 by `2026-11-06-accounts-phase-1-django.md`.** Only Task 1 of this plan was built and kept. Tasks 2 onward were replaced when the hosted layer moved to Django.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let several people sign in to one Batchall server, each with a private catalog, while Rose's existing data becomes the first account and local no-login mode keeps working.

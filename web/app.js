@@ -551,7 +551,7 @@ const SORT_CHOICES = {
   tons: { key: "tons", dir: -1 },
   year: { key: "year", dir: 1 },
 };
-const GROUP_BY_CHOICES = ["box", "era", "avail", "faction", "weight", "kind", "tech", "role", "painted", "material"];
+const GROUP_BY_CHOICES = ["box", "era", "avail", "faction", "weight", "kind", "tech", "role", "painted", "material", "company"];
 
 function loadPrefs() {
   try {
@@ -567,6 +567,12 @@ function loadPrefs() {
     if (saved.sort && SORT_CHOICES[saved.sort]) state.sort = SORT_CHOICES[saved.sort];
     state.compact = Boolean(saved.compact);
     if (Array.isArray(saved.collapsed)) state.collapsed = new Set(saved.collapsed.map(String));
+    // Some groups start collapsed. Each default is applied once, so a group you open stays open afterwards.
+    const applied = new Set(Array.isArray(saved.defaultsApplied) ? saved.defaultsApplied.map(String) : []);
+    for (const key of [`company:${NO_GROUP.company}`]) {
+      if (!applied.has(key)) { state.collapsed.add(key); applied.add(key); }
+    }
+    state.defaultsApplied = applied;
   } catch {
     // Storage can be unavailable or hold something unexpected. The defaults work fine.
   }
@@ -578,6 +584,7 @@ function savePrefs() {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
       view: state.view, compact: state.compact, collapsed: [...state.collapsed],
       groupBy: state.groupBy, groupOn: state.groupOn, sort: sort ? sort[0] : "",
+      defaultsApplied: [...(state.defaultsApplied || [])],
     }));
   } catch {
     // Not being able to remember the view is not worth an error message.
@@ -1161,6 +1168,8 @@ function buildMiniRow(item, mini) {
 // The model code sits in the stats line.
 function buildMiniCard(item, mini) {
   const editing = state.editingCopy === mini.id;
+  // Inside a company's group the banner already names the company and faction, so the strip is left off.
+  const inCompanyGroup = isGrouped() && state.groupBy === "company" && Boolean(mini.company.trim());
   const noteLine = isNamed(mini) && (mini.company || mini.faction) && mini.note ? h("div", { class: "copy-note-line" }, mini.note) : null;
   const remove = h("button", {
     type: "button", class: "sel-x", title: "Remove this mini from the collection", "aria-label": `Remove ${item.name}`,
@@ -1174,7 +1183,7 @@ function buildMiniCard(item, mini) {
       h("div", { class: "sel-title" }), // empty: the mech's name is in the strip under the photo
       remove),
     miniPhotoFrame(item, mini),
-    isNamed(mini) ? h("div", { class: "copy-strip", style: stripStyle(mini) }, stripLines(mini)) : null,
+    isNamed(mini) && !inCompanyGroup ? h("div", { class: "copy-strip", style: stripStyle(mini) }, stripLines(mini)) : null,
     h("div", { class: "card-body" },
       h("div", { class: "card-title" }, h("button", {
         type: "button", class: "unit-link", title: `${item.name}: show unit details`, onclick: () => showUnitDetail(item.unit_uuid, mini),
@@ -1191,6 +1200,7 @@ function buildMiniCard(item, mini) {
 const miniBoxName = (item, mini) => copyBox(item, mini) || "";
 const boxesOf = (item) => [...new Set(item.minis.map((m) => miniBoxName(item, m)))];
 const materialsOf = (item) => [...new Set(item.minis.map((m) => m.material))];
+const companiesOf = (item) => [...new Set(item.minis.map((m) => m.company.trim()))];
 const minisIn = (item, scope) => visibleMinis(item).filter((m) => !scope || scope(item, m));
 
 const rowsFor = (item, scope = null) => minisIn(item, scope).map((m) => buildMiniRow(item, m));
@@ -1205,7 +1215,7 @@ const PAINT_ORDER = ["Unpainted", "Partly painted", "Fully painted"];
 const PRE_ERA = "Before the first era";
 const NO_GROUP = {
   box: "No box", era: "Unknown year", avail: "No availability data", faction: "Unaffiliated", weight: "Unknown", kind: "Unknown",
-  tech: "Unknown", role: "No role", painted: "Unpainted", material: NO_MATERIAL,
+  tech: "Unknown", role: "No role", painted: "Unpainted", material: NO_MATERIAL, company: "No company",
 };
 
 // An era is named by the year the unit debuted. Years before the first era get their own group.
@@ -1249,6 +1259,7 @@ const GROUPERS = {
   role: { of: (i) => [i.role], order: null },
   painted: { of: (i) => [paintOf(i)], order: () => PAINT_ORDER },
   material: { of: (i) => materialsOf(i).map((m) => m || null), order: () => [NO_MATERIAL, ...MATERIALS] },
+  company: { of: (i) => companiesOf(i).map((c) => c || null), order: null },
 };
 
 const isGrouped = () => state.groupOn;
@@ -1293,6 +1304,10 @@ function groupScope(name) {
     const material = name === NO_GROUP.material ? "" : name;
     return (item, mini) => mini.material === material;
   }
+  if (state.groupBy === "company") {
+    const company = name === NO_GROUP.company ? "" : name;
+    return (item, mini) => mini.company.trim() === company;
+  }
   return null;
 }
 
@@ -1320,7 +1335,55 @@ function countText(entries, minis) {
   return entries === minis ? minisText : `${entries} ${entries === 1 ? "entry" : "entries"} · ${minisText}`;
 }
 
+// Adds every mini of a group to the force tray, once each. Pressing it again changes nothing.
+function trayAddGroup(list, scope) {
+  for (const item of list) {
+    const count = minisIn(item, scope).length;
+    const have = state.tray.units.get(item.id) || 0;
+    if (count > have) trayAdd(item.id, count - have);
+  }
+}
+
+// The header of a company group: a banner in the company's strip color with its logo, its faction (the most
+// common one among its minis), how many minis and BV it holds, and how many are painted.
+function companyBanner(name, list, collapsed, toggle) {
+  const scope = groupScope(name);
+  const minis = list.flatMap((item) => minisIn(item, scope));
+  const t = totals(list, scope);
+  const pct = t.models ? Math.round((100 * t.painted) / t.models) : 0;
+  const counts = new Map();
+  for (const m of minis) if (m.faction) counts.set(m.faction, (counts.get(m.faction) || 0) + 1);
+  const faction = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+  const color = state.companyColors?.get(companyKey(name));
+  const bg = color && HEX6.test(color) ? color : DEFAULT_STRIP_COLOR;
+  const logo = state.companyLogos?.get(companyKey(name));
+  const ids = minis.map((m) => m.id);
+  return h("div", { class: "group-head-row company-head", style: `--strip: ${bg}; --strip-text: ${textOnColor(bg)}` },
+    scopeCheckbox(`Select every mini in ${name}`, ids),
+    h("button", { class: "group-toggle company-banner", "aria-expanded": String(!collapsed), onclick: toggle },
+      h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"),
+      h("span", { class: "banner-logo-slot" }, logo
+        ? h("img", { class: "banner-logo" + (logo.opaque ? " opaque" : ""), src: companyLogoUrl(logo), alt: "", onerror: (e) => e.target.remove() })
+        : factionIcon(name)),
+      h("span", { class: "banner-names" }, h("strong", {}, name), faction ? h("span", { class: "banner-faction" }, faction) : null),
+      h("span", { class: "banner-stats" },
+        h("span", { class: "banner-count" }, `${countText(list.length, t.models)} · ${t.bv.toLocaleString()} BV`),
+        h("span", { class: "bar", "aria-hidden": "true", title: `${t.painted} of ${t.models} painted` }, h("i", { style: `width:${pct}%` })),
+        h("span", { class: "banner-painted" }, `${t.painted}/${t.models} painted`))),
+    h("button", {
+      type: "button", class: "icon banner-tray", title: `Add all ${t.models} to the force tray`,
+      onclick: () => trayAddGroup(list, scope),
+    }, "+ tray"));
+}
+
 function groupHeader(name, list, collapsed) {
+  if (state.groupBy === "company" && name !== NO_GROUP.company) {
+    return companyBanner(name, list, collapsed, () => {
+      if (collapsed) state.collapsed.delete(collapseKey(name)); else state.collapsed.add(collapseKey(name));
+      savePrefs();
+      renderRoster();
+    });
+  }
   const t = totals(list, groupScope(name));
   const pct = t.models ? Math.round((100 * t.painted) / t.models) : 0;
   const toggle = () => {

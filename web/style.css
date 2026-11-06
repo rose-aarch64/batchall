@@ -254,6 +254,30 @@ tr.group-row td { background: var(--row-hover); padding: 0; border-top: 1px soli
 /* The group header already names the box, so the Box column would only repeat it. */
 body.group-by-box #roster th:nth-child(4), body.group-by-box #roster td:nth-child(4) { display: none; }
 /* Grouped cards: each group is a header bar over its own grid. */
+/* Company banner: the group header when grouped by company. It takes the company's strip color. */
+.company-head { background: var(--strip, var(--crimson)); color: var(--strip-text, #fff); }
+.company-head .group-toggle.company-banner {
+  display: grid; grid-template-columns: 18px 56px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 14px; color: inherit;
+}
+.company-head .group-toggle.company-banner:hover { background: rgba(0, 0, 0, 0.14); }
+.company-head .group-toggle .chev { color: inherit; opacity: 0.8; }
+.banner-logo-slot { width: 56px; height: 56px; display: grid; place-items: center; }
+.banner-logo-slot img { width: 56px; height: 56px; object-fit: contain; margin: 0; padding: 0; background: none; filter: none; }
+.banner-logo-slot img.opaque { mix-blend-mode: multiply; } /* a JPEG's white background takes the banner's color */
+.banner-names { display: grid; gap: 3px; min-width: 0; }
+.company-head .group-toggle .banner-names strong { margin: 0; font-size: 22px; letter-spacing: 0.03em; text-transform: uppercase; line-height: 1.15; overflow-wrap: anywhere; }
+.banner-faction { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.85; }
+.banner-stats { display: grid; gap: 6px; justify-items: end; text-align: right; }
+.company-head .group-toggle .banner-count { margin: 0; font-size: 16px; font-weight: 700; color: inherit; }
+.company-head .group-toggle .banner-painted { margin: 0; font-size: 13px; color: inherit; opacity: 0.85; }
+.company-head .group-toggle .bar { width: 160px; margin: 0; background: rgba(0, 0, 0, 0.28); border-radius: 4px; overflow: hidden; }
+.company-head .group-toggle .bar i { background: var(--strip-text, #fff); opacity: 0.9; }
+.company-head .banner-tray { margin: 0 14px 0 6px; }
+@media (max-width: 720px) {
+  .company-head .group-toggle.company-banner { grid-template-columns: 18px 40px minmax(0, 1fr); }
+  .banner-logo-slot, .banner-logo-slot img { width: 40px; height: 40px; }
+  .banner-stats { grid-column: 1 / -1; justify-items: start; text-align: left; }
+}
 .card-group-head { background: var(--row-hover); border: 1px solid var(--border); margin-bottom: 12px; }
 .card-groups .card-grid { margin-bottom: 20px; }
 

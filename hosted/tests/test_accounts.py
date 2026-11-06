@@ -142,6 +142,57 @@ class AdminTests(TestCase):
         )
         self.assertFalse(bad.is_valid())
 
+    def _create_form(self, password):
+        from hosted.admin import HandleUserCreationForm
+
+        return HandleUserCreationForm(
+            {"username": "rose", "password1": password, "password2": password}
+        )
+
+    def _change_form(self, password):
+        from hosted.admin import HandlePasswordChangeForm
+
+        user, _ = User.objects.get_or_create(username="target")
+        user.set_password(PASSWORD)
+        user.save()
+        return user, HandlePasswordChangeForm(
+            user, {"password1": password, "password2": password}
+        )
+
+    def test_admin_forms_refuse_oversized_and_unencodable_passwords(self):
+        for name, build in (
+            ("create", lambda p: self._create_form(p)),
+            ("change", lambda p: self._change_form(p)[1]),
+        ):
+            for bad in ("a" * 100_000, "\ud800" * 12):
+                with self.subTest(form=name, length=len(bad)):
+                    form = build(bad)
+                    start = time.monotonic()
+                    self.assertFalse(form.is_valid())
+                    self.assertLess(time.monotonic() - start, 1.0)
+                    self.assertTrue(form.errors)
+
+    def test_admin_forms_store_the_nfc_password(self):
+        composed = unicodedata.normalize("NFC", "pässwörd-ünï")
+        decomposed = unicodedata.normalize("NFD", composed)
+        form = self._create_form(decomposed)
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        self.assertIsNotNone(authenticate(username="rose", password=composed))
+
+        user, change = self._change_form(decomposed)
+        self.assertTrue(change.is_valid(), change.errors)
+        change.save()
+        user.refresh_from_db()
+        self.assertTrue(user.check_password(composed))
+
+    def test_user_admin_uses_the_handle_forms(self):
+        from hosted.admin import HandlePasswordChangeForm
+
+        self.assertIs(
+            django_admin.site._registry[User].change_password_form, HandlePasswordChangeForm
+        )
+
     def test_user_admin_uses_the_handle_form(self):
         from hosted.admin import HandleUserCreationForm
 

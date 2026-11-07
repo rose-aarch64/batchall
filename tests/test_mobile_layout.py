@@ -404,7 +404,7 @@ class FilterSheetTests(unittest.TestCase):
         )
         self.assertGreaterEqual(len(rows), 9)  # 5 text boxes, 3 selects, group-by and sort
         for fid, height, font in rows:
-            self.assertGreaterEqual(height, 44, fid)
+            self.assertGreaterEqual(height, 43.99, fid)  # a select can measure 43.9998 from sub-pixel layout
             self.assertGreaterEqual(font, 16, fid)
         self.assertGreaterEqual(b.js("document.querySelector('#filter-painted').closest('label').getBoundingClientRect().height"), 44)
         self.assertEqual(
@@ -450,12 +450,79 @@ class FilterSheetTests(unittest.TestCase):
         self.assertEqual(b.js("document.querySelector('#filter-faction').value"), "2")
         self.assertEqual(b.js("document.querySelector('#filter-badge').textContent"), "1")
         self.assertEqual(self.count(b), shown)
-        # One change makes one request, so no control has two listeners.
-        time.sleep(0.5)
+        # The count text changing means the reload finished, so the request is already recorded.
         before = self.requests(b)
         self.choose_faction(b, "1")
-        time.sleep(0.6)
+        self.wait_for(b, f"performance.getEntriesByType('resource').filter(e => e.name.includes('/api/collection')).length >= {before + 1}",
+                      "no request followed the change")
         self.assertEqual(self.requests(b), before + 1)
+
+    def test_listeners_run_once_after_many_resizes(self):
+        b = self.open()
+        for _ in range(10):
+            b.resize(1280, 800)
+            b.resize(390, 844)
+        self.wait_for(b, "!!document.querySelector('#filter-sheet #sort-group')", "the View controls did not move into the sheet")
+        # Count the DOM effects of each handler: the badge text and the View controls moving.
+        b.js("""(() => {
+          window.__badge = 0; window.__sheet = 0; window.__bar = 0;
+          const watch = (sel, key) => new MutationObserver((records) => { window[key] += records.length; })
+            .observe(document.querySelector(sel), {childList: true});
+          watch('#filter-badge', '__badge'); watch('#sheet-view', '__sheet'); watch('#view-controls', '__bar');
+        })()""")
+        # One input event is one badge update, and so is one change event.
+        for event in ("input", "change"):
+            b.js("(() => { window.__badge = 0; const e = document.querySelector('#filter-kind'); "
+                 f"e.value = e.options[1].value; e.dispatchEvent(new Event('{event}', {{bubbles: true}})); }})()")
+            self.wait_for(b, "window.__badge >= 1", f"the badge was not updated on {event}")
+            self.assertEqual(b.js("window.__badge"), 1, f"badge updates for one {event} event")
+        # Two controls move per crossing, so each crossing is two DOM moves.
+        b.js("window.__bar = 0; window.__sheet = 0")
+        b.resize(1280, 800)
+        self.wait_for(b, "!!document.querySelector('#view-controls > #sort-group')", "Sort did not move back")
+        self.assertEqual(b.js("window.__bar"), 2)
+        b.js("window.__sheet = 0")
+        b.resize(390, 844)
+        self.wait_for(b, "!!document.querySelector('#filter-sheet #sort-group')", "Sort did not move into the sheet")
+        self.assertEqual(b.js("window.__sheet"), 2)
+
+    def test_sheet_is_a_dialog_only_while_it_is_open_on_a_phone(self):
+        d = self.open(1280, 800, mobile=False)
+        self.assertFalse(d.js("document.querySelector('#filter-sheet').hasAttribute('role')"))
+        self.assertFalse(d.js("document.querySelector('#filter-sheet').hasAttribute('aria-modal')"))
+        nodes = d.ws.send("Accessibility.getFullAXTree")["nodes"]
+        dialogs = [n for n in nodes if not n.get("ignored") and n.get("role", {}).get("value") == "dialog"]
+        self.assertEqual(dialogs, [], "a dialog is exposed on desktop")
+        b = self.open()
+        self.assertFalse(b.js("document.querySelector('#filter-sheet').hasAttribute('role')"))
+        b.click("#open-filters")
+        self.assert_shows(b, "#filter-sheet")
+        self.assertEqual(b.js("document.querySelector('#filter-sheet').getAttribute('role')"), "dialog")
+        self.assertEqual(b.js("document.querySelector('#filter-sheet').getAttribute('aria-modal')"), "true")
+        b.click("#sheet-done")
+        self.assert_hides(b, "#filter-sheet")
+        self.assertFalse(b.js("document.querySelector('#filter-sheet').hasAttribute('role')"))
+        self.assertFalse(b.js("document.querySelector('#filter-sheet').hasAttribute('aria-modal')"))
+
+    def test_page_behind_the_open_sheet_is_inert(self):
+        b = self.open()
+        self.assertEqual(b.js("document.querySelectorAll('[inert]').length"), 0)
+        b.click("#open-filters")
+        self.assert_shows(b, "#filter-sheet")
+        for sel in ("#tabbar", ".topbar", "#roster", "#open-filters", "#toggle-add", "#filter-q", "#tray"):
+            self.assertTrue(b.js(f"document.querySelector('{sel}').matches(':is([inert], [inert] *)')"), sel)
+        for sel in ("#filter-sheet", "#filter-faction", "#sheet-done", "#sheet-backdrop"):
+            self.assertFalse(b.js(f"document.querySelector('{sel}').matches(':is([inert], [inert] *)')"), sel)
+        b.click("#sheet-done")
+        self.assert_hides(b, "#filter-sheet")
+        self.assertEqual(b.js("document.querySelectorAll('[inert]').length"), 0)
+        self.assertEqual(b.js("document.activeElement.id"), "open-filters")
+        # Leaving phone mode with the sheet open frees the page.
+        b.click("#open-filters")
+        self.assert_shows(b, "#filter-sheet")
+        b.resize(1280, 800)
+        self.assert_hides(b, "#sheet-backdrop")
+        self.assertEqual(b.js("document.querySelectorAll('[inert]').length"), 0)
 
     def test_focused_input_is_scrolled_into_view_in_the_sheet(self):
         b = self.open()

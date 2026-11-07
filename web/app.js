@@ -2328,19 +2328,48 @@ function filterSheetOpen() {
   return !$("filter-sheet").hidden;
 }
 
+// Everything on the page outside the sheet and its backdrop, while the sheet is open. The sheet sits
+// inside the page's own markup, so this is the siblings of the sheet and of each of its ancestors.
+let inertBehindSheet = [];
+
+function makePageInert() {
+  const sheet = $("filter-sheet");
+  for (let node = sheet; node !== document.body; node = node.parentElement) {
+    for (const sibling of node.parentElement.children) {
+      if (sibling === node || sibling === $("sheet-backdrop") || sibling.inert) continue;
+      sibling.inert = true;
+      inertBehindSheet.push(sibling);
+    }
+  }
+}
+
+function restorePage() {
+  for (const el of inertBehindSheet) el.inert = false;
+  inertBehindSheet = [];
+}
+
 function openFilterSheet() {
   if (!isPhone() || filterSheetOpen()) return;
-  $("filter-sheet").hidden = false;
+  const sheet = $("filter-sheet");
+  // The sheet is a dialog only while it is open on a phone. Wider, it is part of the toolbar.
+  sheet.setAttribute("role", "dialog");
+  sheet.setAttribute("aria-modal", "true");
+  sheet.hidden = false;
   $("sheet-backdrop").hidden = false;
   $("open-filters").setAttribute("aria-expanded", "true");
+  makePageInert();
   $("filter-box").focus({ preventScroll: true });
 }
 
 function closeFilterSheet(returnFocus = true) {
   if (!filterSheetOpen()) return;
-  $("filter-sheet").hidden = true;
+  const sheet = $("filter-sheet");
+  sheet.hidden = true;
+  sheet.removeAttribute("role");
+  sheet.removeAttribute("aria-modal");
   $("sheet-backdrop").hidden = true;
   $("open-filters").setAttribute("aria-expanded", "false");
+  restorePage(); // before focus moves back, since an inert button cannot take focus
   if (returnFocus) $("open-filters").focus();
 }
 

@@ -1317,7 +1317,7 @@ function buildMiniCard(item, mini) {
   });
   remove.innerHTML = CIRCLE_X_SVG;
   const stats = [item.model || null, item.kind === "mech" ? null : kindLabel(item), `${item.tons ?? "?"}t`, `${item.bv} BV`];
-  return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") + (state.selected.has(mini.id) ? " is-selected" : "") },
+  return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") + (editing ? " is-editing" : "") + (state.selected.has(mini.id) ? " is-selected" : "") },
     h("div", { class: "sel-bar" },
       selectBox(item, mini),
       h("div", { class: "sel-title" }), // empty: the mech's name is in the strip under the photo
@@ -1813,7 +1813,7 @@ function syncViewControls() {
   for (const button of bar.querySelectorAll("button[data-compact]")) {
     button.setAttribute("aria-pressed", String((button.dataset.compact === "1") === state.compact));
   }
-  $("density-group").hidden = state.view === "cards";
+  $("density-group").hidden = effectiveView() === "cards";
   $("group-actions").hidden = !isGrouped();
   $("group-by").value = state.groupBy;
   for (const button of $("group-by-group").querySelectorAll("button[data-group]")) {
@@ -1826,14 +1826,21 @@ function syncViewControls() {
   $("view-count").textContent = countText(state.items.length, models);
 }
 
+// The view on screen. A phone always shows cards, since the table is a desktop tool. The saved choice in
+// state.view is left alone, so using a phone never changes what a wide screen shows.
+function effectiveView() {
+  return isPhone() ? "cards" : state.view;
+}
+
 function renderRoster() {
-  document.body.classList.toggle("view-cards", state.view === "cards");
+  const view = effectiveView();
+  document.body.classList.toggle("view-cards", view === "cards");
   // The group header already names the box, so the table's Box column would only repeat it.
-  document.body.classList.toggle("group-by-box", isGrouped() && state.view === "table" && state.groupBy === "box");
-  document.body.classList.toggle("compact", state.compact && state.view !== "cards");
+  document.body.classList.toggle("group-by-box", isGrouped() && view === "table" && state.groupBy === "box");
+  document.body.classList.toggle("compact", state.compact && view !== "cards");
   pruneSelection(); // a mini that is no longer shown leaves the selection
   const items = sortedItems();
-  if (state.view === "cards") renderCards(items); else renderTable(items);
+  if (view === "cards") renderCards(items); else renderTable(items);
   syncViewControls();
   syncSelectionUI();
 }
@@ -1846,6 +1853,8 @@ function setupViewControls() {
   for (const button of bar.querySelectorAll("button[data-compact]")) {
     button.addEventListener("click", () => { state.compact = button.dataset.compact === "1"; savePrefs(); renderRoster(); });
   }
+  // Crossing the phone width swaps between the cards and the saved desktop view.
+  window.matchMedia(PHONE_QUERY).addEventListener("change", renderRoster);
   $("collapse-all").addEventListener("click", () => {
     for (const [name] of groupsOf(state.items)) state.collapsed.add(collapseKey(name));
     savePrefs();

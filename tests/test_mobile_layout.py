@@ -27,7 +27,7 @@ class MobileLayoutBaselineTests(unittest.TestCase):
         b = self.open(390, 844)
         self.assertNotEqual(b.js("document.querySelector('#catalog-status').textContent.trim()"), "")
         self.assertEqual(b.console_errors(), [])
-        self.assertGreaterEqual(b.js("document.querySelectorAll('#roster tbody tr').length"), 12)
+        self.assertGreaterEqual(b.js("document.querySelectorAll('.mini-card').length"), 12)
 
     def assert_no_sideways_scroll(self, b, label):
         for tab in ("collection", "import"):
@@ -54,7 +54,7 @@ class MobileLayoutBaselineTests(unittest.TestCase):
         b = self.open(390, 844)
         for run in range(5):
             b.open(self.base + "/")
-            self.assertEqual(b.js("document.querySelectorAll('#roster tbody tr').length"), MINIS, f"run {run}")
+            self.assertEqual(b.js("document.querySelectorAll('.mini-card').length"), MINIS, f"run {run}")
 
     def add_button(self, b, size, position="fixed"):
         b.js(
@@ -144,10 +144,10 @@ class PhoneFoundationTests(unittest.TestCase):
         b.click('#tabbar [data-tab="forces"]')
         for selector in ("#tray", "#forces"):
             self.assert_shows(b, selector)
-        for selector in ("#roster", "#filter-q", "#view-controls", "#view-import"):
+        for selector in ("#card-grid", "#filter-q", "#view-controls", "#view-import"):
             self.assertFalse(is_visible(b, selector), selector)
         b.click('#tabbar [data-tab="collection"]')
-        self.assert_shows(b, "#roster")
+        self.assert_shows(b, "#card-grid")
         self.assertFalse(is_visible(b, "#tray"))
         self.assertFalse(is_visible(b, "#forces"))
         self.assertEqual(b.js("document.querySelector('#filter-q').value"), "atlas")
@@ -200,7 +200,7 @@ class PhoneFoundationTests(unittest.TestCase):
     def test_phone_mode_resets_the_page_zoom(self):
         b = self.open()
         self.assertEqual(b.js("getComputedStyle(document.documentElement).zoom"), "1")
-        self.assertGreaterEqual(b.js("document.querySelector('#roster td').getBoundingClientRect().height > 0 && "
+        self.assertGreaterEqual(b.js("document.querySelector('.mini-card .card-meta').getBoundingClientRect().height > 0 && "
                                      "parseFloat(getComputedStyle(document.body).fontSize) * "
                                      "parseFloat(getComputedStyle(document.documentElement).zoom)"), 14)
         d = self.open(1280, 800, mobile=False)
@@ -238,7 +238,7 @@ class PhoneFoundationTests(unittest.TestCase):
 
     def test_bulk_bar_sits_above_the_tab_bar(self):
         b = self.open()
-        b.js("[...document.querySelectorAll('#roster tbody .sel-input')].slice(0, 2).forEach(e => e.click())")
+        b.js("[...document.querySelectorAll('.mini-card .sel-input')].slice(0, 2).forEach(e => e.click())")
         self.assert_shows(b, "#bulkbar")
         bar = b.js("(() => { const r = document.querySelector('#bulkbar').getBoundingClientRect(); "
                    "return [r.bottom, r.left + r.width / 2, r.top + r.height / 2]; })()")
@@ -249,7 +249,7 @@ class PhoneFoundationTests(unittest.TestCase):
     def test_plus_tray_adds_to_the_tray_and_the_forces_tab_shows_it(self):
         b = self.open()
         before = b.js("document.querySelectorAll('#tray-list li').length")
-        b.click('#roster tbody button[title="Add one to the force tray"]')
+        b.click('.mini-card button[title="Add one to the force tray"]')
         self.assertEqual(b.js("document.querySelectorAll('#tray-list li').length"), before + 1)
         b.click('#tabbar [data-tab="forces"]')
         self.assert_shows(b, "#tray-list li")
@@ -540,6 +540,123 @@ class FilterSheetTests(unittest.TestCase):
     def test_tray_hint_points_at_the_collection_tab(self):
         b = self.open()
         self.assertIn("set on the Collection tab", b.js("document.querySelector('#tray .small').textContent"))
+
+
+@unittest.skipUnless(chrome_path(), "Chrome is not installed")
+class CardsFirstTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.base, cls.close_server = fixture_server()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.close_server()
+
+    def open(self, width=390, height=844, mobile=True):
+        b = Browser(width, height, mobile=mobile)
+        b.__enter__()
+        self.addCleanup(b.__exit__, None, None, None)
+        b.open(self.base + "/")
+        return b
+
+    def wait_for(self, b, expression, message):
+        deadline = time.monotonic() + 3
+        while not b.js(expression) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(b.js(expression), message)
+
+    def set_grouping(self, b, group_by):
+        b.click("#open-filters")
+        b.click('#group-by-group [data-group="1"]')
+        b.js(f"(() => {{ const s = document.querySelector('#group-by'); s.value = {group_by!r}; "
+             "s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+        b.click("#sheet-done")
+
+    def small_card_targets(self, b, minimum=44):
+        return b.js("""(() => {
+          const out = [];
+          for (const el of document.querySelectorAll('.mini-card button, .mini-card input, .mini-card select')) {
+            const r = el.getBoundingClientRect();
+            if (!r.width || !r.height) continue;
+            // Half a pixel of slack: while the page's slide-in animation runs, a 44px box can measure 43.9999.
+            if (r.width >= %d - 0.5 && r.height >= %d - 0.5) continue;
+            if (el.type === 'checkbox' && el.closest('label')?.getBoundingClientRect().height >= %d - 0.5) continue;
+            out.push(`${el.tagName.toLowerCase()}.${String(el.className).split(' ').join('.')} ${Math.round(r.width)}x${Math.round(r.height)}`);
+          }
+          return out;
+        })()""" % (minimum, minimum, minimum))
+
+    def test_phone_uses_cards_and_hides_view_and_density_controls(self):
+        b = self.open()
+        self.assertFalse(is_visible(b, "#roster"))
+        self.assertEqual(b.js("document.querySelectorAll('.mini-card').length"), MINIS)
+        self.assertFalse(is_visible(b, "[data-view=table]"))
+        self.assertFalse(is_visible(b, "#density-group"))
+
+    def test_phone_does_not_change_the_saved_desktop_choice(self):
+        b = self.open()
+        b.js("localStorage.setItem('batchall.view', JSON.stringify({view: 'table'}))")
+        b.open(self.base + "/")
+        self.set_grouping(b, "company")
+        saved = b.js("JSON.parse(localStorage.getItem('batchall.view')).view")
+        self.assertEqual(saved, "table")
+        b.resize(1280, 800)
+        self.wait_for(b, "document.querySelector('#roster') && document.querySelector('#roster').offsetParent !== null",
+                      "the table did not come back on a wide screen")
+
+    def test_card_touch_targets_are_44px(self):
+        b = self.open()
+        self.assertEqual(b.js("document.querySelectorAll('.mini-card').length"), MINIS)
+        self.assertEqual(self.small_card_targets(b), [])
+
+    def test_editing_card_spans_the_row_and_its_controls_are_44px(self):
+        b = self.open()
+        b.click('.mini-card button[title="Edit this mini"]')
+        self.wait_for(b, "!!document.querySelector('.mini-card.is-editing .copy-editor')", "the editor did not open")
+        card, grid = b.js("""(() => { const c = document.querySelector('.mini-card.is-editing').getBoundingClientRect();
+          const g = document.querySelector('#card-grid').getBoundingClientRect(); return [c.width, g.width]; })()""")
+        self.assertAlmostEqual(card, grid, delta=1)
+        self.assertEqual(self.small_card_targets(b), [])
+        self.assertEqual(overflow(b), 0)
+
+    def test_one_column_at_360_and_two_at_390(self):
+        left_edges = """(() => [...new Set([...document.querySelectorAll('.mini-card')]
+          .filter((c) => c.getBoundingClientRect().top < document.querySelector('.mini-card').getBoundingClientRect().bottom)
+          .map((c) => Math.round(c.getBoundingClientRect().left)))].length)()"""
+        self.assertEqual(self.open(360, 800).js(left_edges), 1)
+        self.assertEqual(self.open(390, 844).js(left_edges), 2)
+
+    def test_grouping_still_works_on_a_phone(self):
+        b = self.open()
+        self.set_grouping(b, "company")
+        self.wait_for(b, "document.querySelectorAll('.card-group-head').length > 0", "no group headers appeared")
+        heads = b.js("[...document.querySelectorAll('.card-group-head')].map((h) => Math.round(h.getBoundingClientRect().height))")
+        self.assertTrue(all(h >= 44 for h in heads), f"group headers are too short: {heads}")
+        before = b.js("document.querySelectorAll('.mini-card').length")
+        b.click(".card-group-head button")
+        self.wait_for(b, f"document.querySelectorAll('.mini-card').length < {before}", "tapping a group header did not collapse it")
+
+    def test_no_sideways_scroll_with_grouping_on(self):
+        b = self.open()
+        values = b.js("[...document.querySelectorAll('#group-by option')].map((o) => o.value)")
+        for value in values:
+            with self.subTest(group_by=value):
+                self.set_grouping(b, value)
+                self.assertEqual(overflow(b), 0)
+
+    def test_tap_a_name_opens_the_detail_panel_and_close_is_reachable(self):
+        b = self.open()
+        b.js("window.scrollTo(0, 300)")
+        before = b.js("Math.round(window.scrollY)")
+        b.click(".mini-card .unit-link")
+        self.wait_for(b, "!!document.querySelector('.detail-close')", "the detail panel did not open")
+        close = b.js("""(() => { const r = document.querySelector('.detail-close').getBoundingClientRect();
+          return [Math.round(r.height), r.top >= 0, r.bottom <= innerHeight, r.left >= 0, r.right <= innerWidth]; })()""")
+        self.assertGreaterEqual(close[0], 44)
+        self.assertEqual(close[1:], [True, True, True, True])
+        b.click(".detail-close")
+        self.wait_for(b, "!document.querySelector('.detail-close')", "the detail panel did not close")
+        self.assertEqual(b.js("Math.round(window.scrollY)"), before)
 
 
 if __name__ == "__main__":

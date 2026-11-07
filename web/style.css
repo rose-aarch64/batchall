@@ -737,6 +737,62 @@ body.has-bulkbar { padding-bottom: 84px; }
   .sheet-view button.seg { min-height: var(--tap); padding: 6px 14px; }
   .sheet-view button.seg[aria-pressed="true"] { background: var(--crimson); border-color: var(--accent); color: #fff; }
   #filter-sheet .sheet-view select { flex: 1 1 140px; width: auto; }
+
+  /* Cards are the phone's collection view, so the table and density controls have nothing to do. */
+  #view-controls > .group[aria-label="View"], #density-group { display: none; }
+  #view-controls { gap: 8px; }
+  #view-controls .count { margin-left: auto; font-size: 13px; }
+
+  /* Card layout: two columns, one on the narrowest phones. */
+  .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .mini-card:hover { transform: none; }
+  .mini-card .sel-bar { height: calc(var(--tap) + 8px); padding: 0 4px 0 2px; }
+  .mini-card .card-body { padding: 10px 12px 12px; gap: 6px; }
+  .mini-card .card-name { font-size: 14px; }
+  .mini-card .card-meta { font-size: 14px; }
+  .mini-card .card-box { font-size: 13px; }
+  .mini-card .copy-note-line { font-size: 14px; }
+
+  /* Touch targets: the box, the remove button, the name and every action are at least 44px. The checkbox
+     keeps its 22px look inside a 44px hit area (a transparent border, with the drawn box inset). */
+  .mini-card input.sel-input, .group-head-row input.sel-input {
+    width: var(--tap); height: var(--tap); min-width: var(--tap);
+    border: 11px solid transparent; border-radius: 16px; background-clip: padding-box; box-shadow: inset 0 0 0 2px #fff;
+  }
+  .group-head-row input.sel-input { box-shadow: inset 0 0 0 2px var(--muted); margin-left: 4px; }
+  .mini-card .sel-x { width: var(--tap); height: var(--tap); }
+  .mini-card .sel-x svg { width: 28px; height: 28px; }
+  .mini-card .card-title .unit-link { display: block; width: 100%; min-height: var(--tap); line-height: var(--tap); text-align: left; font-size: 17px; }
+  .mini-card button.add-material, .mini-card button.material-pill { min-height: var(--tap); padding: 4px 12px; font-size: 14px; }
+  .mini-card select, .mini-card .card-body input[type="text"], .mini-card .card-body input:not([type]) { min-height: var(--tap); font-size: 16px; }
+  .mini-card .card-actions { gap: 8px; padding-top: 10px; }
+  .mini-card .card-actions button { flex: 1 1 auto; min-height: var(--tap); min-width: var(--tap); padding: 6px 12px; font-size: 14px; }
+  .mini-card .card-actions .paint-toggle { flex: 0 0 var(--tap); padding: 6px; }
+  .mini-card .card-actions > button:first-child { flex: 1 1 100%; } /* "+ tray" gets a full-width row */
+
+  /* A card being edited takes the whole row, so its boxes are wide enough to type in. */
+  .mini-card.is-editing { grid-column: 1 / -1; }
+  .mini-card .copy-editor { gap: 8px; }
+  .mini-card .copy-editor .fld { font-size: 12px; }
+  .mini-card .copy-editor button { min-height: var(--tap); padding: 6px 14px; font-size: 14px; }
+  .mini-card .copy-editor .fld.inline { display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+  .mini-card .copy-editor .fld.inline input { width: 24px; height: 24px; }
+
+  /* The unit detail panel fills the screen. Its Close button is a full touch target, and the card and the
+     text stack in one column. Text sizes inside it are unchanged. */
+  .modal.detail { padding: 12px; }
+  .detail-head { position: sticky; top: -12px; z-index: 1; margin: -12px -12px 12px; padding: 8px 12px; background: var(--surface); }
+  .detail-close { min-height: var(--tap); min-width: var(--tap); padding: 6px 18px; }
+  .detail-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .detail-card { position: static; }
+
+  /* Group headers and company banners are easy to hit. */
+  .group-toggle { min-height: var(--tap); padding: 8px 12px; }
+  .group-head-row .group-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+}
+
+@media (max-width: 360px) {
+  .card-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @keyframes sheet-up { from { transform: translateY(100%); } }

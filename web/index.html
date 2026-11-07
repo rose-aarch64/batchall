@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#8a1c2b">
   <title>Batchall</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-tab="collection">
   <header class="topbar">
     <h1>Batchall</h1>
     <nav class="tabs" role="tablist">
@@ -17,6 +18,12 @@
     <span id="catalog-status" class="muted"></span>
     <span id="account" class="muted" hidden></span>
   </header>
+
+  <nav id="tabbar" class="tabbar" role="tablist" aria-label="Sections">
+    <button type="button" role="tab" data-tab="collection" aria-selected="true">Collection</button>
+    <button type="button" role="tab" data-tab="forces" aria-selected="false">Forces</button>
+    <button type="button" role="tab" data-tab="import" aria-selected="false">Import</button>
+  </nav>
 
   <div id="toast" class="toast" role="status" hidden></div>
 

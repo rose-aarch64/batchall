@@ -593,3 +593,78 @@ body.has-bulkbar { padding-bottom: 84px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Phone layout. Everything for narrow screens lives in this one block, last, so it wins over the
+   older breakpoints above. The bottom tab bar is hidden on wider screens. */
+:root {
+  --tap: 44px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+.tabbar { display: none; }
+
+@media (max-width: 640px) {
+  /* The 0.8 zoom is a desktop choice. On a phone it would shrink text and tap targets below usable size. */
+  html { zoom: 1; }
+  body { padding-bottom: calc(var(--tap) + var(--safe-bottom) + 16px); }
+
+  .topbar {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: calc(8px + var(--safe-top)) 12px 8px;
+  }
+  .topbar h1 { font-size: 22px; letter-spacing: 1px; }
+  .topbar .tabs { display: none; }
+  #account { margin-left: auto; display: flex; align-items: center; gap: 4px; min-width: 0; }
+  #account[hidden] { display: none; }
+  #account button { margin-left: 4px; min-height: var(--tap); padding: 4px 12px; }
+
+  #catalog-status {
+    display: block;
+    margin: 0 0 8px;
+    flex-basis: auto;
+    font-size: 11px;
+    letter-spacing: 1px;
+  }
+
+  .layout { padding: 12px; gap: 12px; }
+
+  .tabbar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    height: calc(var(--tap) + var(--safe-bottom));
+    padding-bottom: var(--safe-bottom);
+    background: var(--surface);
+    border-top: 2px solid var(--crimson);
+  }
+  .tabbar button {
+    flex: 1;
+    min-width: 0;
+    height: var(--tap);
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .tabbar button[aria-selected="true"] { background: var(--crimson); color: #fff; }
+
+  /* Keep the selection bar and the toast above the tab bar. */
+  .bulkbar { bottom: calc(var(--tap) + var(--safe-bottom)); }
+  body.has-bulkbar { padding-bottom: calc(var(--tap) + var(--safe-bottom) + 100px); }
+  .toast { right: 12px; left: 12px; max-width: none; bottom: calc(var(--tap) + var(--safe-bottom) + 12px); }
+
+  /* One tab at a time. The tray sits inside the collection section and the saved forces outside main. */
+  body[data-tab="collection"] #tray,
+  body[data-tab="collection"] #forces,
+  body[data-tab="import"] #forces,
+  body[data-tab="forces"] #view-collection > :not(#tray) { display: none; }
+}

@@ -1,3 +1,4 @@
+import time
 import unittest
 
 from browser import Browser, chrome_path, fixture_server, is_visible, overflow, small_targets
@@ -95,6 +96,125 @@ class MobileLayoutBaselineTests(unittest.TestCase):
         self.assertEqual(b.console_errors(), ["first page error"])
         b.open(self.base + "/")
         self.assertEqual(b.console_errors(), [])
+
+
+@unittest.skipUnless(chrome_path(), "Chrome is not installed")
+class PhoneFoundationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.base, cls.close_server = fixture_server()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.close_server()
+
+    def open(self, width=390, height=844, mobile=True):
+        b = Browser(width, height, mobile=mobile)
+        b.__enter__()
+        self.addCleanup(b.__exit__, None, None, None)
+        b.open(self.base + "/")
+        return b
+
+    def assert_shows(self, b, selector):
+        # Panels fade in over a quarter second, starting at opacity 0, so give them time.
+        deadline = time.monotonic() + 3
+        while not is_visible(b, selector) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(is_visible(b, selector), f"{selector} is not visible")
+
+    def test_tab_bar_is_fixed_to_the_bottom_on_a_phone(self):
+        b = self.open()
+        self.assertTrue(is_visible(b, "#tabbar"))
+        self.assertFalse(is_visible(b, ".tabs"))
+        bottom = b.js("document.querySelector('#tabbar').getBoundingClientRect().bottom")
+        self.assertEqual(round(bottom), b.js("window.innerHeight"))
+        heights = b.js("[...document.querySelectorAll('#tabbar button')].map(e => e.getBoundingClientRect().height)")
+        self.assertEqual(len(heights), 3)
+        for height in heights:
+            self.assertGreaterEqual(height, 44)
+
+    def test_tab_bar_is_hidden_on_desktop(self):
+        b = self.open(1280, 800, mobile=False)
+        self.assertFalse(is_visible(b, "#tabbar"))
+        self.assertTrue(is_visible(b, ".tabs"))
+
+    def test_forces_tab_shows_tray_and_saved_forces_only(self):
+        b = self.open()
+        b.type_into("#filter-q", "atlas")
+        b.click('#tabbar [data-tab="forces"]')
+        for selector in ("#tray", "#forces"):
+            self.assert_shows(b, selector)
+        for selector in ("#roster", "#filter-q", "#view-controls", "#view-import"):
+            self.assertFalse(is_visible(b, selector), selector)
+        b.click('#tabbar [data-tab="collection"]')
+        self.assert_shows(b, "#roster")
+        self.assertFalse(is_visible(b, "#tray"))
+        self.assertFalse(is_visible(b, "#forces"))
+        self.assertEqual(b.js("document.querySelector('#filter-q').value"), "atlas")
+
+    def test_import_tab_still_works_on_a_phone(self):
+        b = self.open()
+        b.click('#tabbar [data-tab="import"]')
+        self.assert_shows(b, "#view-import")
+        self.assertFalse(is_visible(b, "#roster"))
+        self.assertFalse(is_visible(b, "#forces"))
+        self.assertGreaterEqual(b.js("document.querySelector('#import-text').getBoundingClientRect().height"), 120)
+        self.assertEqual(overflow(b), 0)
+
+    def test_tab_bar_marks_the_selected_tab(self):
+        b = self.open()
+        b.click('#tabbar [data-tab="import"]')
+        selected = b.js("[...document.querySelectorAll('#tabbar [aria-selected=true]')].map(e => e.dataset.tab)")
+        self.assertEqual(selected, ["import"])
+
+    def test_content_is_not_hidden_behind_the_tab_bar(self):
+        b = self.open()
+        b.click('.seg[data-view="cards"]')
+        b.js("window.scrollTo(0, document.documentElement.scrollHeight)")
+        last = b.js("(() => { const c = document.querySelectorAll('.mini-card'); return c[c.length - 1].getBoundingClientRect().bottom; })()")
+        top = b.js("document.querySelector('#tabbar').getBoundingClientRect().top")
+        self.assertLessEqual(last, top)
+
+    def test_catalog_status_sits_in_the_collection_tab_on_a_phone(self):
+        b = self.open()
+        self.assertTrue(is_visible(b, "#catalog-status"))
+        self.assertTrue(b.js("!!document.querySelector('#view-collection > #catalog-status')"))
+        self.assertEqual(b.js("document.querySelectorAll('#catalog-status').length"), 1)
+        b.click('#tabbar [data-tab="import"]')
+        self.assertFalse(is_visible(b, "#catalog-status"))
+
+    def test_catalog_status_goes_back_to_the_top_bar_on_desktop(self):
+        b = self.open()
+        b.resize(1280, 800)
+        self.assertTrue(b.js("!!document.querySelector('.topbar > #catalog-status')"))
+        self.assertEqual(b.js("document.querySelectorAll('#catalog-status').length"), 1)
+
+    def test_page_has_viewport_fit_and_theme_color(self):
+        b = self.open()
+        self.assertEqual(
+            b.js("document.querySelector('meta[name=viewport]').content"),
+            "width=device-width, initial-scale=1, viewport-fit=cover",
+        )
+        self.assertEqual(b.js("document.querySelector('meta[name=theme-color]').content"), "#8a1c2b")
+
+    def test_phone_mode_resets_the_page_zoom(self):
+        b = self.open()
+        self.assertEqual(b.js("getComputedStyle(document.documentElement).zoom"), "1")
+        self.assertGreaterEqual(b.js("document.querySelector('#roster td').getBoundingClientRect().height > 0 && "
+                                     "parseFloat(getComputedStyle(document.body).fontSize) * "
+                                     "parseFloat(getComputedStyle(document.documentElement).zoom)"), 14)
+        d = self.open(1280, 800, mobile=False)
+        self.assertEqual(d.js("getComputedStyle(document.documentElement).zoom"), "0.8")
+
+    def test_phone_mode_keeps_the_account_box_in_the_top_bar(self):
+        b = self.open()
+        b.js(
+            "(() => { const a = document.querySelector('#account'); a.hidden = false; "
+            "a.replaceChildren('Rose ', Object.assign(document.createElement('button'), {id: 'sign-out', textContent: 'Sign out'})); })()"
+        )
+        self.assertTrue(is_visible(b, "#sign-out"))
+        self.assertGreaterEqual(b.js("document.querySelector('#sign-out').getBoundingClientRect().height"), 44)
+        self.assertEqual(overflow(b), 0)
 
 
 if __name__ == "__main__":

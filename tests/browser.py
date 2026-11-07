@@ -28,7 +28,7 @@ DEFAULT_READY_JS = """
 (() => {
   const status = document.querySelector('#catalog-status');
   if (!status || status.textContent.trim() === '') return false;
-  if (document.querySelector('#roster tbody tr, .mini-card')) return true;
+  if (document.querySelector('#roster tbody tr, .mini-card, #card-grid .empty')) return true;
   const empty = document.querySelector('#roster-empty');
   return !!empty && !empty.hidden;
 })()
@@ -241,7 +241,7 @@ class Browser:
         """Navigate to url and wait until the page has loaded and the app has rendered.
 
         By default the app counts as rendered when #catalog-status has text and the collection has been
-        drawn: table rows, cards, or the empty-collection message. Pass ready (a JavaScript expression)
+        drawn: table rows, cards, or the empty-collection message (in the table or the cards view). Pass ready (a JavaScript expression)
         to wait for something else, such as the sign-in page.
         """
         # Console output from the previous page does not count against this one.
@@ -393,7 +393,11 @@ _SMALL_TARGETS_JS = """
 
 
 def small_targets(browser, minimum=44):
-    """Visible controls (outside .table-wrap) whose box is shorter or narrower than minimum pixels."""
+    """Visible controls (outside .table-wrap) whose box is shorter or narrower than minimum pixels.
+
+    This measures rendered pixels, which html { zoom } scales: at the desktop zoom of 0.8 a 60px
+    control measures 48. The phone layout resets the zoom to 1.
+    """
     script = _SMALL_TARGETS_JS.replace("__IS_VISIBLE__", IS_VISIBLE_JS)
     return browser.js(f"({script})({int(minimum)})")
 

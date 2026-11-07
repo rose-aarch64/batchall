@@ -22,6 +22,22 @@ def run_python(code, **env):
     )
 
 
+class TestSettingsIsolationTests(SimpleTestCase):
+    def test_test_settings_never_point_at_the_real_data_directory(self):
+        from django.conf import settings
+
+        from batchall import config
+
+        data_dir = config.DATA_DIR.resolve()
+        for name, value in (
+            ("accounts database", settings.DATABASES["default"]["NAME"]),
+            ("accounts test database", settings.DATABASES["default"]["TEST"]["NAME"]),
+            ("shared database", settings.BATCHALL_SHARED_DB),
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(Path(value).resolve().is_relative_to(data_dir), value)
+
+
 class SettingsImportTests(SimpleTestCase):
     def test_missing_or_short_secret_refuses_to_load(self):
         for env in ({}, {"BATCHALL_SECRET": "x" * 31}):

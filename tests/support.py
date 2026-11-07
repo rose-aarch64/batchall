@@ -23,6 +23,16 @@ UNITS = [
 ]
 
 
+def mark_multiuser(path):
+    """Mark a shared database file as multi-user, as the adopt step does."""
+    conn = db.connect_shared(path)
+    try:
+        with conn:
+            db.set_meta(conn, "multiuser", 1)
+    finally:
+        conn.close()
+
+
 def make_db():
     conn = db.connect(":memory:")
     seed_catalog(conn)

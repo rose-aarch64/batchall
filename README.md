@@ -187,6 +187,77 @@ python3 -m batchall forces list
 
 `python3 -m batchall <command> --help` lists every option.
 
+On a multi-user database (see below) the CLI takes `--user HANDLE` before the command to act as that account, and defaults to the first administrator. `--user` on a single-user database is an error, and `serve` is refused on a multi-user one.
+
+## Hosting for several people
+
+Local mode (everything above) needs no installs and no accounts. This section is only for running one shared server where each person has their own collection. The command line still works on a hosted database and still needs nothing beyond the standard library.
+
+Install the hosted requirements in a virtual environment:
+
+```
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-hosted.txt
+```
+
+Settings come from environment variables:
+
+- `BATCHALL_SECRET`: required, at least 32 characters. Rotating it invalidates outstanding invite codes and signed-in sessions.
+- `BATCHALL_ALLOWED_HOSTS`: comma-separated host names the site answers to.
+- `BATCHALL_TRUSTED_ORIGINS`: comma-separated origins such as `https://batchall.example.org`.
+- `BATCHALL_HTTPS=1`: serve with secure cookies and HTTPS-only settings.
+- `BATCHALL_TRUSTED_PROXY=1`: take the client address from the proxy's `X-Forwarded-For`. Set it only behind a proxy you control.
+- `BATCHALL_ACCOUNTS_DB`: path of the accounts database (default `data/accounts.db`).
+- `BATCHALL_DEBUG=1`: Django debug mode, for trying things locally only.
+
+Setup, in this order:
+
+```
+.venv/bin/python manage.py migrate
+.venv/bin/python manage.py adopt --handle rose
+sqlite3 data/batchall.db "VACUUM"
+chmod 700 data data/users
+.venv/bin/python manage.py createinvite
+.venv/bin/python manage.py collectstatic --noinput
+```
+
+- `adopt` creates the first administrator and moves the existing collection, minis, photos, forces and company data into that account. Stop the single-user app first, because the database is locked while it runs. Run the hosted server only after `adopt`; until then `/api/` answers 503.
+- Vacuum the shared database after `adopt`. The freed pages still hold the old photo and logo bytes until then.
+- `createinvite` prints a one-use sign-up code. Give it to the person joining.
+
+Try it with `.venv/bin/python manage.py runserver`. For production run gunicorn behind a reverse proxy:
+
+```
+.venv/bin/gunicorn hosted.wsgi --workers 1 --threads 4
+```
+
+The sign-in rate limiter keeps its counts in each process, so lockouts are per gunicorn worker. One worker with several threads keeps a single count. With more workers an attacker gets the limit once per worker.
+
+A Caddy site that forwards the host and protocol and serves static files itself:
+
+```
+batchall.example.org {
+    handle /static/* {
+        root * /path/to/battletech/data
+        file_server
+    }
+    reverse_proxy 127.0.0.1:8000 {
+        header_up Host {host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+```
+
+`manage.py check --deploy` reports a few warnings that are policy for the proxy and host, not the app: W005, W008 and W021 cover HSTS subdomains and preload and the SSL redirect. W009 appears when the secret is short or weak, as the test key is.
+
+Back up `data/accounts.db`, the shared `data/batchall.db` and every file in `data/users/` with SQLite's backup command, which is safe while the server runs:
+
+```
+sqlite3 data/accounts.db ".backup /backups/accounts.db"
+sqlite3 data/batchall.db ".backup /backups/batchall.db"
+sqlite3 data/users/1.db ".backup /backups/users-1.db"
+```
+
 ## Data
 
 Unit stats, BV, and faction availability come from MekBay's public data files at `db.mekbay.com`

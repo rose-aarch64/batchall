@@ -93,6 +93,9 @@ def api(request, path):
     if not request.user.is_authenticated:
         return _error("sign in required", HTTPStatus.UNAUTHORIZED)
 
+    if not db.is_multiuser(settings.BATCHALL_SHARED_DB):
+        return _error("the server is not set up: run manage.py adopt", HTTPStatus.SERVICE_UNAVAILABLE)
+
     try:
         body = _read_body(request) if request.method in BODY_METHODS else {}
     except server.ApiError as exc:

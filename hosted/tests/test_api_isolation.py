@@ -12,7 +12,7 @@ from django.test import Client, TestCase, override_settings
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from support import seed_catalog  # noqa: E402
+from support import mark_multiuser, seed_catalog  # noqa: E402
 
 from batchall import collection, colors, copies, db, forces, logos, photos, server  # noqa: E402
 from hosted import accounts  # noqa: E402
@@ -38,6 +38,7 @@ class ApiIsolationTests(TestCase):
         shared = db.connect_shared(self.shared)
         seed_catalog(shared)
         shared.close()
+        mark_multiuser(self.shared)
 
         self.user_a = accounts.create_user("alice", PASSWORD)
         self.user_b = accounts.create_user("bob", PASSWORD)
@@ -227,6 +228,20 @@ class ApiIsolationTests(TestCase):
         self.assertEqual(anon.get("/api/collection").json(), {"error": "sign in required"})
         self.assertEqual(self.send(anon, "post", "/api/build", {}).status_code, 401)
         self.assertEqual(self.send(anon, "post", "/api/meta", {}).status_code, 405)
+
+    def test_api_answers_503_until_the_shared_database_is_adopted(self):
+        db.connect_shared(Path(self._tmp.name) / "fresh.db").close()
+        expected = {"error": "the server is not set up: run manage.py adopt"}
+        with override_settings(BATCHALL_SHARED_DB=str(Path(self._tmp.name) / "fresh.db")):
+            response = self.client_b.get("/api/collection")
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.json(), expected)
+            self.assertEqual(self.send(self.client_b, "post", "/api/build", {}).status_code, 503)
+            self.assertFalse(db.user_db_path(Path(self._tmp.name) / "fresh.db", self.user_b.id).exists())
+            anon = Client(enforce_csrf_checks=False)
+            self.assertEqual(anon.get("/api/collection").status_code, 401)
+            self.assertEqual(anon.get("/api/nope").status_code, 404)
+            self.assertEqual(self.client_b.get("/api/auth/me").status_code, 200)
 
     def test_shared_reference_routes_work_when_signed_in(self):
         meta = self.client_b.get("/api/meta")

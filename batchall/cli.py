@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import art, availability, boxes, builder, catalog, collection, config, copies, db, export, formations, forces
+from . import accountsdb, art, availability, boxes, builder, catalog, collection, config, copies, db, export, formations, forces
 from .kinds import KIND_LABELS, KINDS
 
 
@@ -339,9 +339,10 @@ def cmd_serve(args, conn):
 def make_parser():
     p = argparse.ArgumentParser(prog="batchall", description="Batchall: a BattleTech miniature collection manager and force builder")
     p.add_argument("--db", help=f"database path (default {config.DB_PATH})")
+    p.add_argument("--user", help="multi-user database: the account to act as (default: the first administrator)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    c = sub.add_parser("catalog", help="manage the unit catalog")
+    c =sub.add_parser("catalog", help="manage the unit catalog")
     c.add_argument("action", choices=["import", "status", "search"])
     c.add_argument("query", nargs="*", help="search terms")
     c.add_argument("--from-dir", help="load from already-downloaded files instead of downloading")
@@ -449,9 +450,29 @@ def make_parser():
     return p
 
 
+def _open(args):
+    """The connection a command runs on: a user's database in multi-user mode, else the single database."""
+    if not db.is_multiuser(args.db):
+        if args.user:
+            raise ValueError("database is not in multi-user mode")
+        return db.connect(args.db)
+    if args.command == "serve":
+        raise ValueError(
+            "this database is in multi-user mode; run the hosted server instead "
+            "(manage.py runserver, or gunicorn hosted.wsgi)"
+        )
+    if args.command in ("catalog", "boxes") and getattr(args, "action", None) == "import":
+        return db.connect_shared(args.db)  # the catalog and boxes live in the shared file
+    return db.connect_user(accountsdb.lookup_user_id(args.user), args.db)
+
+
 def main(argv=None):
     args = make_parser().parse_args(argv)
-    conn = db.connect(args.db)
+    try:
+        conn = _open(args)
+    except (ValueError, FileNotFoundError) as exc:
+        _emit({"error": str(exc)})
+        sys.exit(1)
     try:
         args.func(args, conn)
     except (ValueError, FileNotFoundError, json.JSONDecodeError) as exc:

@@ -268,5 +268,212 @@ class PhoneFoundationTests(unittest.TestCase):
         self.assertFalse(is_visible(b, "#roster"))
 
 
+FILTER_IDS = ("filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company", "filter-material",
+              "filter-kind", "filter-era", "filter-faction", "filter-painted")
+
+
+@unittest.skipUnless(chrome_path(), "Chrome is not installed")
+class FilterSheetTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.base, cls.close_server = fixture_server()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.close_server()
+
+    def open(self, width=390, height=844, mobile=True):
+        b = Browser(width, height, mobile=mobile)
+        b.__enter__()
+        self.addCleanup(b.__exit__, None, None, None)
+        b.open(self.base + "/")
+        return b
+
+    def wait_for(self, b, expression, message):
+        deadline = time.monotonic() + 3
+        while not b.js(expression) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(b.js(expression), message)
+
+    def assert_shows(self, b, selector):
+        deadline = time.monotonic() + 3
+        while not is_visible(b, selector) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertTrue(is_visible(b, selector), f"{selector} is not visible")
+
+    def assert_hides(self, b, selector):
+        deadline = time.monotonic() + 3
+        while is_visible(b, selector) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(is_visible(b, selector), f"{selector} is still visible")
+
+    def count(self, b):
+        return b.js("document.querySelector('#view-count').textContent")
+
+    def choose_faction(self, b, value="2"):
+        before = self.count(b)
+        b.type_into("#filter-faction", value)
+        self.wait_for(b, f"document.querySelector('#view-count').textContent !== {before!r}", "the count did not change")
+
+    def requests(self, b):
+        return b.js("performance.getEntriesByType('resource').filter(e => e.name.includes('/api/collection')).length")
+
+    def test_phone_toolbar_shows_only_search_filters_and_add(self):
+        b = self.open()
+        visible = b.js(
+            "[...document.querySelectorAll('.toolbar input, .toolbar select, .toolbar button, .toolbar label')]"
+            ".filter(e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden')"
+            ".map(e => e.id || e.tagName)"
+        )
+        self.assertEqual(visible, ["filter-q", "open-filters", "toggle-add"])
+        self.assertFalse(is_visible(b, "#filter-faction"))
+        self.assertFalse(is_visible(b, "#filter-sheet"))
+        self.assertEqual(overflow(b), 0)
+
+    def test_filter_sheet_opens_filters_and_closes(self):
+        b = self.open()
+        before = self.count(b)
+        b.click("#open-filters")
+        self.assert_shows(b, "#filter-sheet")
+        self.assertEqual(b.js("document.querySelector('#filter-sheet').getAttribute('role')"), "dialog")
+        self.assertEqual(b.js("document.querySelector('#filter-sheet').getAttribute('aria-modal')"), "true")
+        self.wait_for(b, "Math.round(document.querySelector('#filter-sheet').getBoundingClientRect().bottom) "
+                         "=== window.innerHeight", "the sheet does not reach the bottom of the screen")
+        # The sheet and its backdrop are painted over the tab bar.
+        self.assertTrue(b.js("(() => { const e = document.elementFromPoint(195, window.innerHeight - 4); "
+                             "return !!e && !!e.closest('#filter-sheet'); })()"))
+        self.assertTrue(b.js("(() => { const e = document.elementFromPoint(195, 4); "
+                             "return !!e && e.id === 'sheet-backdrop'; })()"))
+        self.choose_faction(b)
+        after = self.count(b)
+        self.assertNotEqual(after, before)
+        self.assertEqual(b.js("document.querySelector('#filter-badge').textContent"), "1")
+        b.click("#sheet-done")
+        self.assert_hides(b, "#filter-sheet")
+        self.assert_hides(b, "#sheet-backdrop")
+        self.assertEqual(self.count(b), after)
+        self.assertEqual(b.js("document.querySelector('#filter-badge').textContent"), "1")
+
+    def test_clear_all_empties_every_filter_and_hides_the_badge(self):
+        b = self.open()
+        before = self.count(b)
+        b.click("#open-filters")
+        self.assert_shows(b, "#filter-sheet")
+        self.assertFalse(is_visible(b, "#filter-badge"))
+        self.choose_faction(b)
+        b.type_into("#filter-box", "nothing")
+        b.js("(() => { const e = document.querySelector('#filter-painted'); e.checked = true; "
+             "e.dispatchEvent(new Event('change', {bubbles: true})); })()")
+        b.type_into("#filter-q", "atlas")
+        self.assertEqual(b.js("document.querySelector('#filter-badge').textContent"), "3")
+        b.click("#filters-clear")
+        for fid in FILTER_IDS:
+            self.assertEqual(b.js(f"(() => {{ const e = document.getElementById('{fid}'); "
+                                  "return e.type === 'checkbox' ? e.checked : e.value; })()"), False if fid == "filter-painted" else "", fid)
+        # The search box is not part of the sheet.
+        self.assertEqual(b.js("document.querySelector('#filter-q').value"), "atlas")
+        self.assertFalse(is_visible(b, "#filter-badge"))
+        b.type_into("#filter-q", "")
+        self.wait_for(b, f"document.querySelector('#view-count').textContent === {before!r}", "the full list did not return")
+
+    def test_escape_and_backdrop_close_the_sheet_and_focus_returns(self):
+        b = self.open()
+        for how in ("escape", "backdrop"):
+            with self.subTest(how=how):
+                b.click("#open-filters")
+                self.assert_shows(b, "#filter-sheet")
+                self.assertTrue(b.js("document.querySelector('#filter-sheet').contains(document.activeElement)"),
+                                "focus did not move into the sheet")
+                if how == "escape":
+                    b.js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', "
+                         "{key: 'Escape', bubbles: true, cancelable: true}))")
+                else:
+                    b.click("#sheet-backdrop")
+                self.assert_hides(b, "#filter-sheet")
+                self.assertEqual(b.js("document.activeElement.id"), "open-filters")
+
+    def test_filter_controls_are_44px_tall_and_16px_font_in_the_sheet(self):
+        b = self.open()
+        b.click("#open-filters")
+        self.assert_shows(b, "#filter-sheet")
+        self.assert_shows(b, "#filter-faction")
+        rows = b.js(
+            "[...document.querySelectorAll('#filter-sheet input, #filter-sheet select')]"
+            ".filter(e => e.getClientRects().length > 0 && e.type !== 'checkbox')"
+            ".map(e => [e.id, e.getBoundingClientRect().height, parseFloat(getComputedStyle(e).fontSize)])"
+        )
+        self.assertGreaterEqual(len(rows), 9)  # 5 text boxes, 3 selects, group-by and sort
+        for fid, height, font in rows:
+            self.assertGreaterEqual(height, 44, fid)
+            self.assertGreaterEqual(font, 16, fid)
+        self.assertGreaterEqual(b.js("document.querySelector('#filter-painted').closest('label').getBoundingClientRect().height"), 44)
+        self.assertEqual(
+            b.js("[...document.querySelectorAll('#filter-sheet button')]"
+                 ".filter(e => e.getBoundingClientRect().height < 44).map(e => e.id)"), [])
+
+    def test_sheet_holds_grouping_and_sort_on_a_phone_only(self):
+        b = self.open()
+        self.assertTrue(b.js("!!document.querySelector('#filter-sheet #group-by-group') && "
+                             "!!document.querySelector('#filter-sheet #card-sort')"))
+        self.assertEqual(b.js("document.querySelectorAll('#group-by-group, #sort-group, #group-by, #card-sort').length"), 4)
+        b.resize(1280, 800)
+        self.assertEqual(b.js("[...document.querySelector('#view-controls').children].map(e => e.id).join()"),
+                         ",density-group,group-by-group,group-actions,sort-group,view-count")
+        b.resize(390, 844)
+        self.assertTrue(b.js("!!document.querySelector('#filter-sheet #sort-group')"))
+
+    def test_desktop_filters_stay_inline(self):
+        b = self.open(1280, 800, mobile=False)
+        for fid in ("filter-q", "filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company",
+                    "filter-material", "filter-kind", "filter-era", "filter-faction", "filter-painted", "toggle-add"):
+            self.assertTrue(is_visible(b, f"#{fid}"), fid)
+        for selector in ("#open-filters", "#filter-badge", "#sheet-backdrop", "#sheet-done", "#filters-clear", ".sheet-head"):
+            self.assertFalse(is_visible(b, selector), selector)
+        # The wrapper adds no box of its own, so every control is laid out as a child of the toolbar row.
+        self.assertEqual(b.js("getComputedStyle(document.querySelector('#filter-sheet')).display"), "contents")
+        self.assertTrue(b.js("(() => { const q = document.querySelector('#filter-q').getBoundingClientRect(); "
+                             "const f = document.querySelector('#filter-faction').getBoundingClientRect(); "
+                             "return Math.abs(q.top - f.top) < 60; })()"))
+
+    def test_resizing_across_640_keeps_filters(self):
+        b = self.open()
+        self.choose_faction(b)
+        shown = self.count(b)
+        b.click("#open-filters")
+        self.assert_shows(b, "#filter-sheet")
+        b.resize(1280, 800)
+        self.assert_hides(b, "#sheet-backdrop")
+        self.assertEqual(b.js("document.querySelector('#filter-faction').value"), "2")
+        self.assertTrue(is_visible(b, "#filter-faction"))
+        b.resize(390, 844)
+        self.assertFalse(is_visible(b, "#filter-sheet"), "the sheet stayed open across the breakpoint")
+        self.assertEqual(b.js("document.querySelector('#filter-faction').value"), "2")
+        self.assertEqual(b.js("document.querySelector('#filter-badge').textContent"), "1")
+        self.assertEqual(self.count(b), shown)
+        # One change makes one request, so no control has two listeners.
+        time.sleep(0.5)
+        before = self.requests(b)
+        self.choose_faction(b, "1")
+        time.sleep(0.6)
+        self.assertEqual(self.requests(b), before + 1)
+
+    def test_focused_input_is_scrolled_into_view_in_the_sheet(self):
+        b = self.open()
+        b.click("#open-filters")
+        self.assert_shows(b, "#filter-sheet")
+        b.js("window.__centered = 0; Element.prototype.scrollIntoView = function (o) { "
+             "if (o && o.block === 'center') window.__centered++; }")
+        # A headless page may not be the focused window, so raise the event focus() would.
+        b.js("document.querySelector('#filter-material').dispatchEvent(new FocusEvent('focusin', {bubbles: true}))")
+        self.assertEqual(b.js("window.__centered"), 1)
+        b.resize(1280, 800)
+        b.js("document.querySelector('#filter-material').dispatchEvent(new FocusEvent('focusin', {bubbles: true}))")
+        self.assertEqual(b.js("window.__centered"), 1, "scrolling is for the phone sheet only")
+
+    def test_tray_hint_points_at_the_collection_tab(self):
+        b = self.open()
+        self.assertIn("set on the Collection tab", b.js("document.querySelector('#tray .small').textContent"))
+
+
 if __name__ == "__main__":
     unittest.main()

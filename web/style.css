@@ -603,6 +603,16 @@ body.has-bulkbar { padding-bottom: 84px; }
 }
 .tabbar { display: none; }
 
+/* The filter sheet. Above 640px the wrapper adds no box, so the filters stay in the toolbar row.
+   An id rule beats the browser's [hidden] rule, which is why the sheet shows here even with the attribute. */
+#filter-sheet, .sheet-body { display: contents; }
+.open-filters, .sheet-head, .sheet-view, .sheet-backdrop { display: none; }
+.badge {
+  display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 10px;
+  background: var(--crimson); color: #fff; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center;
+}
+.badge[hidden] { display: none; }
+
 @media (max-width: 640px) {
   /* The 0.8 zoom is a desktop choice. On a phone it would shrink text and tap targets below usable size. */
   html { zoom: 1; }
@@ -668,4 +678,65 @@ body.has-bulkbar { padding-bottom: 84px; }
   body[data-tab="collection"] #forces,
   body[data-tab="import"] #forces,
   body[data-tab="forces"] #view-collection > :not(#tray) { display: none; }
+
+  /* Toolbar row: search, Filters, Add units. The rest of the filters live in the sheet. */
+  .toolbar { flex-wrap: nowrap; }
+  .toolbar > input[type="search"] { flex: 1 1 0; min-width: 0; min-height: var(--tap); font-size: 16px; }
+  .toolbar > button { flex: none; min-height: var(--tap); }
+  .open-filters { display: inline-flex; align-items: center; }
+
+  .sheet-backdrop { display: block; position: fixed; inset: 0; z-index: 44; background: rgba(0, 0, 0, 0.55); animation: fade-in var(--fade); }
+  .sheet-backdrop[hidden] { display: none; }
+  #filter-sheet {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 45; /* over the tab bar (40) and the sheet backdrop (44), under dialogs (50) */
+    max-height: 85vh;
+    max-height: 85dvh;
+    background: var(--surface);
+    border-top: 2px solid var(--crimson);
+    box-shadow: 0 -8px 26px rgba(0, 0, 0, 0.6);
+    animation: sheet-up 0.2s ease-out;
+  }
+  #filter-sheet[hidden] { display: none; }
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sheet-head h2 { margin: 0 auto 0 0; font-size: 18px; letter-spacing: 1px; text-transform: uppercase; }
+  .sheet-head button { min-height: var(--tap); padding: 4px 16px; }
+  .sheet-body {
+    display: grid;
+    gap: 10px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 12px 12px calc(12px + var(--safe-bottom));
+  }
+  #filter-sheet input[type="search"], #filter-sheet select {
+    width: 100%;
+    min-width: 0;
+    min-height: var(--tap);
+    font-size: 16px;
+    flex: none;
+  }
+  #filter-sheet .check { min-height: var(--tap); gap: 10px; }
+  #filter-sheet .check input { width: 22px; height: 22px; }
+  .sheet-view { display: grid; gap: 10px; padding-top: 6px; border-top: 1px solid var(--border); }
+  .sheet-view h3 { margin: 0; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .sheet-view .group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .sheet-view .group[hidden] { display: none; }
+  .sheet-view .label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); min-width: 64px; }
+  .sheet-view button.seg { min-height: var(--tap); padding: 6px 14px; }
+  .sheet-view button.seg[aria-pressed="true"] { background: var(--crimson); border-color: var(--accent); color: #fff; }
+  #filter-sheet .sheet-view select { flex: 1 1 140px; width: auto; }
 }
+
+@keyframes sheet-up { from { transform: translateY(100%); } }

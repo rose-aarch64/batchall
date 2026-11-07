@@ -32,6 +32,14 @@
       <section id="view-collection">
         <div class="toolbar">
           <input id="filter-q" type="search" placeholder="Search name, chassis, model" aria-label="Search collection">
+          <button id="open-filters" type="button" class="open-filters" aria-haspopup="dialog" aria-controls="filter-sheet" aria-expanded="false">Filters <span id="filter-badge" class="badge" hidden></span></button>
+          <div id="filter-sheet" class="sheet" role="dialog" aria-modal="true" aria-label="Filters" hidden>
+          <div class="sheet-head">
+            <h2>Filters</h2>
+            <button id="filters-clear" type="button">Clear all</button>
+            <button id="sheet-done" type="button" class="primary">Done</button>
+          </div>
+          <div class="sheet-body">
           <input id="filter-box" type="search" data-suggest="box" autocomplete="off" placeholder="Box" aria-label="Filter by box" class="box-filter">
           <input id="filter-tag" type="search" list="tag-options" autocomplete="off" placeholder="Copy tag" aria-label="Filter by copy tag" class="box-filter">
           <datalist id="tag-options"></datalist>
@@ -45,8 +53,12 @@
           <select id="filter-era" aria-label="Era"><option value="">Any era</option></select>
           <select id="filter-faction" aria-label="Faction"><option value="">Any faction</option></select>
           <label class="check"><input id="filter-painted" type="checkbox"> Painted only</label>
+          <div id="sheet-view" class="sheet-view"><h3>View</h3></div>
+          </div>
+          </div>
           <button id="toggle-add" class="primary">Add units</button>
         </div>
+        <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
 
         <div id="add-panel" class="panel" hidden>
           <input id="add-q" type="search" data-suggest="unit" autocomplete="off" placeholder="Type a unit name, e.g. atlas as7" aria-label="Search the unit catalog">
@@ -134,7 +146,7 @@
             <button id="tray-build" class="primary">Build for me</button>
             <button id="tray-clear">Clear</button>
           </div>
-          <p class="muted small">Build uses the era, faction and painted filters above.</p>
+          <p class="muted small">Build uses the era, faction and painted filters set on the Collection tab.</p>
           <ul id="tray-list" class="tray-list"></ul>
           <div id="tray-summary" class="tray-summary"></div>
           <div class="tray-save">

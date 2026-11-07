@@ -2247,9 +2247,10 @@ function setupControls() {
 
   let filterTimer = null;
   const refilter = () => { clearTimeout(filterTimer); filterTimer = setTimeout(loadCollection, 200); };
-  for (const id of ["filter-q", "filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company", "filter-material", "filter-kind", "filter-era", "filter-faction", "filter-painted"]) {
+  for (const id of ["filter-q", ...SHEET_FILTER_IDS]) {
     $(id).addEventListener("input", refilter);
   }
+  setupFilterSheet();
   $("toggle-add").addEventListener("click", () => {
     const panel = $("add-panel");
     panel.hidden = !panel.hidden;
@@ -2299,6 +2300,105 @@ const PHONE_QUERY = "(max-width: 640px)";
 
 function isPhone() {
   return window.matchMedia(PHONE_QUERY).matches;
+}
+
+// ---------- filter sheet ----------
+
+// The filters that live in the phone sheet. The search box stays in the toolbar row.
+const SHEET_FILTER_IDS = ["filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company", "filter-material", "filter-kind", "filter-era", "filter-faction", "filter-painted"];
+
+// Controls of #view-controls that move into the sheet's View section on a phone, in sheet order.
+const SHEET_VIEW_CONTROLS = ["group-by-group", "sort-group"];
+
+function activeFilterCount() {
+  return SHEET_FILTER_IDS.filter((id) => {
+    const el = $(id);
+    return el.type === "checkbox" ? el.checked : el.value.trim() !== "";
+  }).length;
+}
+
+function updateFilterBadge() {
+  const count = activeFilterCount();
+  const badge = $("filter-badge");
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+}
+
+function filterSheetOpen() {
+  return !$("filter-sheet").hidden;
+}
+
+function openFilterSheet() {
+  if (!isPhone() || filterSheetOpen()) return;
+  $("filter-sheet").hidden = false;
+  $("sheet-backdrop").hidden = false;
+  $("open-filters").setAttribute("aria-expanded", "true");
+  $("filter-box").focus({ preventScroll: true });
+}
+
+function closeFilterSheet(returnFocus = true) {
+  if (!filterSheetOpen()) return;
+  $("filter-sheet").hidden = true;
+  $("sheet-backdrop").hidden = true;
+  $("open-filters").setAttribute("aria-expanded", "false");
+  if (returnFocus) $("open-filters").focus();
+}
+
+function clearSheetFilters() {
+  for (const id of SHEET_FILTER_IDS) {
+    const el = $(id);
+    if (el.type === "checkbox") el.checked = false; else el.value = "";
+  }
+  // The same event a typed change raises, so the collection reloads and the badge updates as they do.
+  $("filter-kind").dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// The View controls are the page's own elements. They move into the sheet on a phone and back to
+// their place in #view-controls on a wider screen, so ids and listeners stay as they are.
+function placeViewControls(anchors) {
+  const section = $("sheet-view");
+  for (const id of SHEET_VIEW_CONTROLS) {
+    const el = $(id);
+    if (isPhone()) section.append(el); else anchors.get(el).before(el);
+  }
+}
+
+function setupFilterSheet() {
+  // Each control goes back before the element that followed it in #view-controls.
+  const anchors = new Map(SHEET_VIEW_CONTROLS.map((id) => [$(id), $(id).nextElementSibling]));
+  const sheet = $("filter-sheet");
+  const toolbar = document.querySelector("#view-collection > .toolbar");
+
+  $("open-filters").addEventListener("click", openFilterSheet);
+  $("sheet-done").addEventListener("click", () => closeFilterSheet());
+  $("sheet-backdrop").addEventListener("click", () => closeFilterSheet());
+  $("filters-clear").addEventListener("click", clearSheetFilters);
+  toolbar.addEventListener("input", updateFilterBadge);
+  toolbar.addEventListener("change", updateFilterBadge);
+
+  // Capture phase, so Escape closes the sheet before the page-level handlers see it.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !filterSheetOpen() || document.querySelector(".modal-backdrop")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeFilterSheet();
+  }, true);
+
+  // Keep the field being typed in clear of the on-screen keyboard.
+  const reveal = (el) => {
+    if (isPhone() && el?.matches?.("input, select, textarea")) el.scrollIntoView({ block: "center" });
+  };
+  sheet.addEventListener("focusin", (e) => reveal(e.target));
+  window.visualViewport?.addEventListener("resize", () => {
+    if (filterSheetOpen() && sheet.contains(document.activeElement)) reveal(document.activeElement);
+  });
+
+  window.matchMedia(PHONE_QUERY).addEventListener("change", () => {
+    placeViewControls(anchors);
+    if (!isPhone()) closeFilterSheet(false);
+  });
+  placeViewControls(anchors);
+  updateFilterBadge();
 }
 
 // name is "collection", "forces" or "import". On a wide screen the tray and the saved forces are always

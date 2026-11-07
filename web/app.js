@@ -213,13 +213,25 @@ function nameLink(item) {
   return h("button", { type: "button", class: "unit-link", title: "Show unit details", onclick: () => showUnitDetail(item.unit_uuid) }, item.name);
 }
 
+function csrfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
 async function api(method, path, body) {
   const opts = { method, headers: {} };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
+  // The hosted server sets this cookie and requires it back on writes. The local server never sets it.
+  const token = csrfToken();
+  if (method !== "GET" && token) opts.headers["X-CSRFToken"] = token;
   const res = await fetch(path, opts);
+  if (res.status === 401 && location.pathname !== "/login.html") {
+    location.href = "/login.html";
+    throw new Error("sign in required");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
   return data;
@@ -2281,8 +2293,27 @@ function setupControls() {
   }
 }
 
+function showAccount(user) {
+  const box = $("account");
+  box.replaceChildren(
+    user.display_name || user.handle,
+    " ",
+    h("button", { type: "button", id: "sign-out", onclick: signOut }, "Sign out"),
+  );
+  box.hidden = false;
+}
+
+async function signOut() {
+  await guarded(async () => {
+    await api("POST", "/api/auth/logout", {});
+    location.href = "/login.html";
+  });
+}
+
 (async function init() {
   await guarded(async () => {
+    const me = await api("GET", "/api/auth/me");
+    if (me.mode !== "local") showAccount(me);
     state.meta = await api("GET", "/api/meta");
     await loadCompanyLogos();
     loadPrefs();

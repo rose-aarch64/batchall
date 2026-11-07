@@ -296,7 +296,6 @@ class ApiIsolationTests(TestCase):
         self.assertEqual(anon.get("/%00").status_code, 404)
         self.assertEqual(anon.post("/index.html").status_code, 405)
 
-    @unittest.skip("login.html arrives in Task 8")
     def test_login_page_is_public(self):
         self.assertEqual(Client().get("/login.html").status_code, 200)
 

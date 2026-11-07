@@ -85,6 +85,29 @@ code { background: var(--bg); padding: 1px 5px; border-radius: var(--radius); }
 .tab.active { background: var(--tab-bg); color: var(--tab-text); }
 #catalog-status { margin-left: auto; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
 
+#account { font-size: 12px; letter-spacing: 1px; }
+#account[hidden] { display: none; }
+#account button { margin-left: 8px; padding: 2px 10px; font-size: 12px; }
+
+.login-page { display: grid; justify-items: center; align-content: start; padding: 48px 16px; }
+.login-card { width: min(100%, 360px); }
+.login-card h1 { margin: 0 0 16px; }
+.login-switch { display: flex; margin-bottom: 4px; }
+.login-switch .seg { flex: 1; margin-left: -1px; border-radius: 0; padding: 6px 14px; }
+.login-switch .seg:first-child { margin-left: 0; border-radius: var(--radius) 0 0 var(--radius); }
+.login-switch .seg:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.login-switch .seg[aria-pressed="true"] { background: var(--crimson); border-color: var(--accent); color: #fff; }
+.login-form[hidden], .login-error[hidden] { display: none; }
+.login-form button[type="submit"] { margin-top: 16px; width: 100%; }
+.login-form button:disabled { opacity: 0.6; cursor: default; }
+.login-form input[type="password"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+.login-error { margin: 12px 0 0; color: var(--danger); }
+
 @keyframes panel-in { from { opacity: 0; transform: translateY(6px); } }
 #view-collection, #view-import { animation: panel-in 0.25s ease-out; }
 /* Cards are rebuilt on every change, so they must not animate in or each click would make them flash. */

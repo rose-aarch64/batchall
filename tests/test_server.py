@@ -66,6 +66,11 @@ class ServerTests(unittest.TestCase):
         except ValueError:
             return res.status, data
 
+    def test_local_server_reports_local_mode(self):
+        status, body = self.request("GET", "/api/auth/me")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"mode": "local"})
+
     def test_collection_round_trip_and_build(self):
         status, entry = self.request("POST", "/api/collection", {"unit_uuid": "u-atlas", "qty": 1})
         self.assertEqual(status, 200)

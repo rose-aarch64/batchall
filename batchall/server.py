@@ -395,7 +395,13 @@ def delete_force(conn, query, body, force_id):
     return {"deleted": int(force_id)}
 
 
+def get_auth_me(conn, query, body):
+    # The local server has no accounts. The page asks this first and treats the answer as "no sign-in".
+    return {"mode": "local"}
+
+
 ROUTES = [
+    ("GET", r"/api/auth/me", get_auth_me),
     ("GET", r"/api/meta", get_meta),
     ("GET", r"/api/catalog/search", get_catalog_search),
     ("GET", r"/api/collection", get_collection),

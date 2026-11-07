@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in - Batchall</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="login-page">
+  <main class="login-card panel">
+    <h1>Batchall</h1>
+
+    <div class="login-switch" role="group" aria-label="Sign in or create an account">
+      <button type="button" id="show-signin" class="seg" aria-pressed="true">Sign in</button>
+      <button type="button" id="show-signup" class="seg" aria-pressed="false">Create account</button>
+    </div>
+
+    <form id="signin-form" class="login-form">
+      <label class="field">Handle
+        <input id="signin-handle" name="handle" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label class="field">Password
+        <input id="signin-password" name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+
+    <form id="signup-form" class="login-form" hidden>
+      <label class="field">Handle
+        <input id="signup-handle" name="handle" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label class="field">Password
+        <input id="signup-password" name="password" type="password" autocomplete="new-password" required>
+      </label>
+      <label class="field">Invite code
+        <input id="signup-invite" name="invite_code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <button type="submit" class="primary">Create account</button>
+    </form>
+
+    <p id="login-error" class="login-error" role="alert" hidden></p>
+  </main>
+  <script src="login.js"></script>
+</body>
+</html>

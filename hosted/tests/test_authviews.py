@@ -7,6 +7,7 @@ from django.test import Client, TestCase, override_settings
 
 from batchall import db
 from hosted import accounts, authviews
+from hosted.tests.limiters import reset_limiters
 
 User = get_user_model()
 PASSWORD = "correct horse battery"
@@ -15,8 +16,8 @@ NEW_PASSWORD = "another long passphrase"
 
 class AuthViewTests(TestCase):
     def setUp(self):
-        authviews.handle_limiter.reset(*list(authviews.handle_limiter._entries))
-        authviews.ip_limiter.reset(*list(authviews.ip_limiter._entries))
+        reset_limiters()
+        self.addCleanup(reset_limiters)
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.shared = Path(self._tmp.name) / "batchall.db"
@@ -102,6 +103,28 @@ class AuthViewTests(TestCase):
             response = self.post(client, "/api/auth/login", {"handle": "rose", "password": "wrong password!"})
             self.assertEqual(response.status_code, 401)
         response = self.post(client, "/api/auth/login", {"handle": "rose", "password": PASSWORD})
+        self.assertEqual(response.status_code, 429)
+        self.assertGreater(int(response["Retry-After"]), 0)
+
+    def login_from(self, ip, handle="rose", password="wrong password!"):
+        client = self.new_client()
+        return self.post(
+            client, "/api/auth/login", {"handle": handle, "password": password}, REMOTE_ADDR=ip
+        )
+
+    def test_five_failures_lock_only_that_handle_and_ip_pair(self):
+        accounts.create_user("rose", PASSWORD)
+        for _ in range(5):
+            self.assertEqual(self.login_from("10.0.0.1").status_code, 401)
+        self.assertEqual(self.login_from("10.0.0.1", password=PASSWORD).status_code, 429)
+        self.assertEqual(self.login_from("10.0.0.2", password=PASSWORD).status_code, 200)
+
+    def test_thirty_failures_across_addresses_lock_the_handle_for_everyone(self):
+        accounts.create_user("rose", PASSWORD)
+        for number in range(29):
+            self.assertEqual(self.login_from(f"10.1.0.{number}").status_code, 401)
+        self.assertEqual(self.login_from("10.1.0.100").status_code, 401)
+        response = self.login_from("10.1.0.200", password=PASSWORD)
         self.assertEqual(response.status_code, 429)
         self.assertGreater(int(response["Retry-After"]), 0)
 

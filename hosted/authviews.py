@@ -13,7 +13,8 @@ from batchall.ratelimit import RateLimiter
 from hosted import accounts
 from hosted.accounts import AccountError
 
-handle_limiter = RateLimiter(5, 300, 300)
+pair_limiter = RateLimiter(5, 300, 300)  # keyed by (handle, ip)
+handle_limiter = RateLimiter(30, 300, 300)  # keyed by handle alone, across all addresses
 ip_limiter = RateLimiter(30, 300, 300)
 
 _BAD_LOGIN = "invalid handle or password"
@@ -111,6 +112,37 @@ def _locked(request, *limiter_keys):
     return None
 
 
+def login_handle(raw):
+    """The normalized handle for limiter keys, or "" when the text is not a valid handle."""
+    try:
+        return accounts.normalize_handle(raw)
+    except AccountError:
+        return ""
+
+
+def _login_keys(handle, ip):
+    return (
+        (pair_limiter, ("hi", handle, ip)),
+        (handle_limiter, ("handle", handle)),
+        (ip_limiter, ("ip", ip)),
+    )
+
+
+def login_retry_after(handle, ip):
+    """Seconds until a sign-in attempt may be tried, 0 when none is locked out."""
+    return max(limiter.retry_after(key) for limiter, key in _login_keys(handle, ip))
+
+
+def record_login_failure(handle, ip):
+    for limiter, key in _login_keys(handle, ip):
+        limiter.record_failure(key)
+
+
+def record_login_success(handle, ip):
+    pair_limiter.reset(("hi", handle, ip))
+    handle_limiter.reset(("handle", handle))
+
+
 @api("POST")
 def signup(request):
     data = _json_body(request)
@@ -135,26 +167,20 @@ def signup(request):
 @api("POST")
 def login_view(request):
     data = _json_body(request)
-    raw_handle = data.get("handle")
-    try:
-        handle = accounts.normalize_handle(raw_handle)
-    except AccountError:
-        handle = None
-    handle_key = ("handle", handle if handle is not None else "")
-    ip_key = ("ip", client_ip(request))
-    locked = _locked(request, (handle_limiter, handle_key), (ip_limiter, ip_key))
-    if locked:
-        return locked
+    handle = login_handle(data.get("handle"))
+    ip = client_ip(request)
+    wait = login_retry_after(handle, ip)
+    if wait > 0:
+        return _error("too many attempts, try again later", 429, Retry_After=str(wait))
 
     user = None
     password = _plain_password(data.get("password"))
-    if handle is not None and password is not None:
+    if handle and password is not None:
         user = authenticate(request, username=handle, password=password)
     if user is None:
-        handle_limiter.record_failure(handle_key)
-        ip_limiter.record_failure(ip_key)
+        record_login_failure(handle, ip)
         return _error(_BAD_LOGIN, 401)
-    handle_limiter.reset(handle_key)
+    record_login_success(handle, ip)
     if request.user.is_authenticated:
         # Django's login() keeps the key when the same user signs in again.
         request.session.cycle_key()

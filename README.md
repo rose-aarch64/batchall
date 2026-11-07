@@ -224,6 +224,13 @@ chmod 700 data data/users
 - `adopt` creates the first administrator and moves the existing collection, minis, photos, forces and company data into that account. Stop the single-user app first, because the database is locked while it runs. Run the hosted server only after `adopt`; until then `/api/` answers 503.
 - Vacuum the shared database after `adopt`. The freed pages still hold the old photo and logo bytes until then.
 - `createinvite` prints a one-use sign-up code. Give it to the person joining.
+- On a fresh host with no existing data, run `python3 -m batchall catalog import` first. `adopt` refuses to run when the shared database is missing. Then run `manage.py migrate`, `adopt` and `createinvite` in that order.
+- `adopt` writes `data/batchall.db.pre-multiuser` before it changes anything. Keep it as the rollback. It still holds the old photos and logos, so delete it once you no longer need to roll back.
+- `data/battletech.db`, the copy from before the rename (see above), may still exist with the old data. Delete it deliberately once you are satisfied with the move.
+- Never delete `accounts.db` on its own. Account ids index the files in `data/users/`, so restore `accounts.db` together with `data/users/`. Sign-up refuses an account id that already has a data file.
+- The admin login at `/admin/login/` is rate limited like the API sign-in: five wrong passwords for one handle from one address lock that pair for five minutes, so an operator who locks themselves out waits five minutes. `/admin/` may also be restricted at the proxy.
+- `manage.py changepassword` and `manage.py createsuperuser` apply the same password rules as sign-up (10 to 256 characters, stored in NFC form).
+- With `BATCHALL_DEBUG` unset, `runserver` does not serve static files, so the admin site looks unstyled. Use `collectstatic` plus the proxy, or set `BATCHALL_DEBUG=1` for local experiments only.
 
 Try it with `.venv/bin/python manage.py runserver`. For production run gunicorn behind a reverse proxy:
 
@@ -231,7 +238,7 @@ Try it with `.venv/bin/python manage.py runserver`. For production run gunicorn 
 .venv/bin/gunicorn hosted.wsgi --workers 1 --threads 4
 ```
 
-The sign-in rate limiter keeps its counts in each process, so lockouts are per gunicorn worker. One worker with several threads keeps a single count. With more workers an attacker gets the limit once per worker.
+The sign-in rate limiters keep their counts in each process, so lockouts are per gunicorn worker. One worker with several threads keeps a single count. With more workers an attacker gets the limit once per worker.
 
 A Caddy site that forwards the host and protocol and serves static files itself:
 

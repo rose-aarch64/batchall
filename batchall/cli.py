@@ -342,7 +342,7 @@ def make_parser():
     p.add_argument("--user", help="multi-user database: the account to act as (default: the first administrator)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    c =sub.add_parser("catalog", help="manage the unit catalog")
+    c = sub.add_parser("catalog", help="manage the unit catalog")
     c.add_argument("action", choices=["import", "status", "search"])
     c.add_argument("query", nargs="*", help="search terms")
     c.add_argument("--from-dir", help="load from already-downloaded files instead of downloading")

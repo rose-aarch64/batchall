@@ -1,15 +1,20 @@
+import tempfile
 import threading
 import time
 import unicodedata
+from pathlib import Path
+from unittest import mock
 
 from django.contrib import admin as django_admin
 from django.contrib.auth import authenticate, get_user_model
 from django.db import connection
-from django.test import RequestFactory, TestCase, TransactionTestCase
+from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
 
+from batchall import db
 from hosted import accounts
 from hosted.accounts import AccountError
 from hosted.models import Invite
+from hosted.signals import keep_user_files
 
 User = get_user_model()
 PASSWORD = "correct horse battery"
@@ -92,6 +97,57 @@ class SignUpTests(TestCase):
         with self.assertRaises(AccountError):
             accounts.sign_up("Rose", PASSWORD, code)
         self.assertIsNone(Invite.objects.get().used_by)
+
+    def test_a_bad_invite_wins_over_an_existing_handle(self):
+        accounts.create_user("rose", PASSWORD)
+        for bad in ["wrong", "x" * 40]:
+            with self.subTest(bad=bad):
+                with self.assertRaises(AccountError) as ctx:
+                    accounts.sign_up("rose", PASSWORD, bad)
+                self.assertEqual(str(ctx.exception), "invalid invite code")
+
+    def test_a_bad_invite_is_refused_before_any_hashing(self):
+        accounts.make_invite()
+        with mock.patch.object(accounts, "make_password", return_value="x") as make_password:
+            with self.assertRaises(AccountError):
+                accounts.sign_up("rose", PASSWORD, "wrong")
+        make_password.assert_not_called()
+
+    def test_a_used_invite_is_refused_before_any_hashing(self):
+        code = accounts.make_invite()
+        accounts.sign_up("rose", PASSWORD, code)
+        with mock.patch.object(accounts, "make_password", return_value="x") as make_password:
+            with self.assertRaises(AccountError) as ctx:
+                accounts.sign_up("other", PASSWORD, code)
+        self.assertEqual(str(ctx.exception), "invalid invite code")
+        make_password.assert_not_called()
+
+    def test_sign_up_refuses_an_id_that_already_has_a_data_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shared = Path(tmp) / "batchall.db"
+            with override_settings(BATCHALL_SHARED_DB=str(shared)):
+                probe = accounts.create_user("probe", PASSWORD)
+                next_id = probe.id + 1
+                with keep_user_files():
+                    probe.delete()
+                stale = db.user_db_path(shared, next_id)
+                stale.parent.mkdir(parents=True)
+                stale.write_bytes(b"an old user's data")
+                code = accounts.make_invite()
+                with self.assertRaises(AccountError) as ctx:
+                    accounts.sign_up("rose", PASSWORD, code)
+                self.assertEqual(
+                    str(ctx.exception), "server error: a data file already exists for this account id"
+                )
+                self.assertFalse(User.objects.filter(username="rose").exists())
+                self.assertIsNone(Invite.objects.get().used_by)
+                self.assertEqual(stale.read_bytes(), b"an old user's data")
+
+    def test_sign_up_succeeds_when_no_data_file_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with override_settings(BATCHALL_SHARED_DB=str(Path(tmp) / "batchall.db")):
+                user = accounts.sign_up("rose", PASSWORD, accounts.make_invite())
+        self.assertEqual(user.username, "rose")
 
     def test_invite_code_is_not_stored(self):
         code = accounts.make_invite()

@@ -89,6 +89,11 @@ class DbSplitTests(unittest.TestCase):
         sqlite3.connect(bare).close()
         self.assertFalse(db.is_multiuser(bare))
 
+    def test_is_multiuser_is_false_for_a_corrupt_file(self):
+        corrupt = Path(self._tmp.name) / "corrupt.db"
+        corrupt.write_bytes(b"this is not a sqlite database " * 200)
+        self.assertFalse(db.is_multiuser(corrupt))
+
     def test_wal_is_on(self):
         user = self.open_user(1)
         self.assertEqual(self.shared.execute("PRAGMA journal_mode").fetchone()[0], "wal")

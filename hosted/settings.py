@@ -6,7 +6,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from batchall import config
 
-SECRET_KEY = os.environ.get("BATCHALL_SECRET", "")
+SECRET_KEY = os.environ.get("BATCHALL_SECRET", "").strip()
 if len(SECRET_KEY) < 32:
     raise ImproperlyConfigured("BATCHALL_SECRET must be set to at least 32 characters")
 
@@ -25,13 +25,15 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"] + _csv("BATCHALL_ALLOWED_HOS
 CSRF_TRUSTED_ORIGINS = _csv("BATCHALL_TRUSTED_ORIGINS")
 
 INSTALLED_APPS = [
+    # Django lets the first app that provides a management command win, so hosted comes first to
+    # replace the changepassword and createsuperuser commands with versions that apply our rules.
+    "hosted",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "hosted",
 ]
 
 MIDDLEWARE = [
@@ -40,6 +42,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "hosted.middleware.AdminLoginLimitMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "hosted.middleware.SecurityHeadersMiddleware",
 ]

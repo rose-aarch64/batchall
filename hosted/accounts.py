@@ -4,6 +4,7 @@ import re
 import secrets
 import unicodedata
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.password_validation import validate_password
@@ -12,6 +13,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 
+from batchall import db
 from hosted.models import Invite
 
 MIN_PASSWORD = 10
@@ -23,6 +25,7 @@ RESERVED_HANDLES = frozenset(
 _HANDLE_RE = re.compile(r"[a-z0-9-]{3,30}")
 _INVITE_SALT = "batchall-invite"
 _INVALID_INVITE = "invalid invite code"
+_STALE_DATA_FILE = "server error: a data file already exists for this account id"
 
 
 class AccountError(ValueError):
@@ -117,9 +120,15 @@ def sign_up(handle, password, invite_code, display_name=None):
         code_hash = _hash_invite(invite_code)
     except UnicodeEncodeError:
         raise AccountError(_INVALID_INVITE) from None
+    # A bad invite is refused before the handle is looked at and before any hashing. The conditional
+    # update below is what settles a race between two sign-ups for the same invite.
+    if not Invite.objects.filter(code_hash=code_hash, used_by__isnull=True).exists():
+        raise AccountError(_INVALID_INVITE)
     hashed = make_password(password)
     with transaction.atomic():
         user = _insert_user(handle, hashed, name)
+        if db.user_db_path(settings.BATCHALL_SHARED_DB, user.id).exists():
+            raise AccountError(_STALE_DATA_FILE)
         claimed = Invite.objects.filter(code_hash=code_hash, used_by__isnull=True).update(
             used_by=user, used_at=timezone.now()
         )

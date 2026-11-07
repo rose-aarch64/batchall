@@ -227,7 +227,7 @@ def is_multiuser(path=None):
         return False
     try:
         row = conn.execute("SELECT value FROM meta WHERE key = 'multiuser'").fetchone()
-    except sqlite3.OperationalError:  # no meta table
+    except sqlite3.DatabaseError:  # no meta table, or the file is not a database
         return False
     finally:
         conn.close()

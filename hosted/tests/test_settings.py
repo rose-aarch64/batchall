@@ -46,6 +46,21 @@ class SettingsImportTests(SimpleTestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("ImproperlyConfigured", result.stderr)
 
+    def test_whitespace_only_secret_is_refused(self):
+        for secret in (" " * 40, "\t" * 40, "x" * 31 + " " * 10):
+            with self.subTest(secret=repr(secret)):
+                result = run_python("import hosted.settings", BATCHALL_SECRET=secret)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ImproperlyConfigured", result.stderr)
+
+    def test_secret_is_used_without_surrounding_whitespace(self):
+        result = run_python(
+            "import hosted.settings as s; print(repr(s.SECRET_KEY))",
+            BATCHALL_SECRET="  " + GOOD_SECRET + "\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), repr(GOOD_SECRET))
+
     def test_allowed_hosts_and_trusted_origins_merge_environment(self):
         result = run_python(
             "import hosted.settings as s; print(s.ALLOWED_HOSTS); print(s.CSRF_TRUSTED_ORIGINS)",

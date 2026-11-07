@@ -18,7 +18,10 @@ Rose approved the move to Django on 2026-11-06 and delegated the choices below.
 2. **Ownership by per-user database file, not `user_id` columns** (R3). Django's ORM is used only for accounts. Isolation holds by construction: a request's connection holds one user's rows. Phase 2's front page must open each public user's file or read a summary table.
 3. **Other users' ids answer 404** (R3). Missing ids answer 400 in the handlers today, so the hosted API checks that the id exists in the caller's database first. Local mode keeps its statuses.
 4. **Django stores the session key itself in the sessions table**, not a hash of it (R2 asks for hashed). Anyone who can read `accounts.db` can already read everything, so the gain from hashing is small. Accepted.
-5. **Hosted admin tasks use Django's admin site and `manage.py` commands**, not `batchall admin ...` CLI subcommands (R8, R12).
+5. **Hosted admin tasks use Django's admin site and `manage.py` commands** (`adopt`, `createinvite`, `changepassword`, `createsuperuser`), not `batchall admin ...` CLI subcommands (R8, R12).
+6. **The hosted server is Django** (`manage.py runserver` or `gunicorn hosted.wsgi`), so there is no `serve --multiuser`. `python3 -m batchall serve` refuses a multi-user database.
+7. **No session "last seen" column.** Django sessions carry an expiry only.
+8. **Sign-in rate limiting is in process memory.** Limits are per worker and reset on restart. The same limiters cover the API sign-in and the admin login.
 
 ## Global Constraints
 

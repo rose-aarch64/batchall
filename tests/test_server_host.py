@@ -59,5 +59,19 @@ class HostCheckTests(unittest.TestCase):
         self.assertEqual(get(port, f"192.168.1.5:{port}"), 403)
 
 
+class ServerUrlTests(unittest.TestCase):
+    def test_a_specific_address_is_the_one_printed(self):
+        self.assertEqual(server.server_url("10.52.70.66", 8765), "http://10.52.70.66:8765/")
+        self.assertEqual(server.server_url("MyPC.local", 9000), "http://mypc.local:9000/")
+
+    def test_loopback_and_wildcard_binds_print_localhost(self):
+        for host in ("127.0.0.1", "localhost", "0.0.0.0", "::", ""):
+            with self.subTest(host=host):
+                self.assertEqual(server.server_url(host, 8765), "http://localhost:8765/")
+
+    def test_an_ipv6_address_is_bracketed(self):
+        self.assertEqual(server.server_url("fe80::1", 8765), "http://[fe80::1]:8765/")
+
+
 if __name__ == "__main__":
     unittest.main()

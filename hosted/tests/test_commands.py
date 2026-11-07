@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 from io import StringIO
@@ -138,6 +139,35 @@ class AdoptCommandTests(TestCase):
                 self.run_adopt()
         self.assertEqual(User.objects.count(), 1)
 
+    def test_a_reused_account_with_a_live_user_file_keeps_it(self):
+        left = accounts.create_user("rose", PASSWORD, superuser=True)
+        live = db.connect_user(left.id, self.path)
+        with live:
+            live.execute("INSERT INTO collection (unit_uuid, qty) VALUES ('u-condor', 3)")
+        live.close()
+        with self.assertRaises(CommandError):
+            self.run_adopt()
+        self.assertEqual(User.objects.count(), 1)
+        self.assertFalse(db.is_multiuser(self.path))
+        check = sqlite3.connect(db.user_db_path(self.path, left.id))
+        self.addCleanup(check.close)
+        self.assertEqual(check.execute("SELECT unit_uuid FROM collection").fetchall(), [("u-condor",)])
+
+    def test_an_interrupt_while_the_database_is_locked_keeps_the_account(self):
+        holder = sqlite3.connect(self.path, isolation_level=None)
+        self.addCleanup(holder.close)
+
+        def interrupt_while_locked(path, user_id):
+            holder.execute("BEGIN EXCLUSIVE")
+            raise KeyboardInterrupt
+
+        with mock.patch.object(multiuser, "LOCK_WAIT", 0.2), mock.patch.object(
+            multiuser, "adopt_data", interrupt_while_locked
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_adopt()
+        self.assertEqual(User.objects.count(), 1)
+
     def test_adopt_refuses_a_missing_database_and_creates_nothing(self):
         missing = Path(self._tmp.name) / "typo" / "batchall.db"
         with override_settings(BATCHALL_SHARED_DB=str(missing)):
@@ -146,6 +176,7 @@ class AdoptCommandTests(TestCase):
         self.assertIn(str(missing), str(caught.exception))
         self.assertEqual(User.objects.count(), 0)
         self.assertFalse(missing.exists())
+        self.assertFalse(missing.parent.exists())
 
     def test_adopt_accepts_a_missing_default_file_when_the_old_one_exists(self):
         fresh = Path(self._tmp.name) / "fresh"

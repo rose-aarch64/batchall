@@ -165,7 +165,9 @@ class AdoptDataTests(unittest.TestCase):
         conn.close()
 
         # A leftover, partly filled user file from the crashed run must not be trusted.
-        leftover = db.connect_user(5, self.path)
+        leftover = sqlite3.connect(db.user_db_path(self.path, 5))
+        leftover.executescript(db.USER_SCHEMA)
+        leftover.execute(f"PRAGMA user_version = {getattr(multiuser, 'ADOPT_MARKER', 0)}")
         with leftover:
             leftover.execute("INSERT INTO collection (unit_uuid) VALUES ('u-junk')")
         leftover.close()
@@ -281,6 +283,85 @@ class AdoptDataTests(unittest.TestCase):
             result = multiuser.adopt_data(self.path, 5)
         self.assertEqual(result["counts"]["collection"], 1)
         self.assertTrue(legacy.is_file())
+
+    def test_a_user_file_adopt_did_not_create_is_never_touched(self):
+        self.build().close()
+        live = db.connect_user(5, self.path)
+        with live:
+            live.execute("INSERT INTO collection (unit_uuid, qty) VALUES ('u-condor', 3)")
+        live.close()
+        target = db.user_db_path(self.path, 5)
+        before = sqlite3.connect(target).execute("SELECT * FROM collection").fetchall()
+        with self.assertRaises(ValueError) as caught:
+            multiuser.adopt_data(self.path, 5)
+        self.assertIn(str(target), str(caught.exception))
+        after = sqlite3.connect(target).execute("SELECT * FROM collection").fetchall()
+        self.assertEqual(after, before)
+        self.assertFalse(db.is_multiuser(self.path))
+        self.assertEqual(list(self.path.parent.glob("*.pre-multiuser*")), [])
+        conn = db.connect(self.path)
+        self.addCleanup(conn.close)
+        self.assertEqual(self.counts(conn)["collection"], 2)
+
+    def test_a_marked_leftover_from_a_killed_run_is_replaced(self):
+        self.build().close()
+        multiuser._copy_user_tables(self.path, 5)  # a run killed after the user file committed
+        leftover = sqlite3.connect(db.user_db_path(self.path, 5))
+        with leftover:
+            leftover.execute("INSERT INTO collection (unit_uuid) VALUES ('u-junk')")
+        leftover.close()
+        result = multiuser.adopt_data(self.path, 5)
+        self.assertEqual(result["counts"]["collection"], 2)
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        self.assertEqual(user.execute("SELECT COUNT(*) FROM collection WHERE unit_uuid = 'u-junk'").fetchone()[0], 0)
+
+    def test_the_finished_user_file_keeps_working(self):
+        self.build().close()
+        multiuser.adopt_data(self.path, 5)
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        with user:
+            user.execute("INSERT INTO collection (unit_uuid, qty) VALUES ('u-marauder', 1)")
+        self.assertEqual(user.execute("SELECT COUNT(*) FROM collection").fetchone()[0], 3)
+        self.assertEqual(multiuser.adopt_data(self.path, 5)["counts"]["collection"], 3)
+
+    def test_interrupt_inside_the_drop_transaction_propagates_unchanged(self):
+        conn = self.build()
+        with conn:
+            for i in range(30):
+                conn.execute(
+                    "INSERT INTO mini_photos (copy_id, content_type, data, width, height) "
+                    "SELECT id, 'image/jpeg', zeroblob(300000), 1, 1 FROM copies WHERE id = 8 AND ? = 0",
+                    (i,),
+                )
+            conn.execute("UPDATE mini_photos SET data = zeroblob(3000000) WHERE copy_id = 8")
+        conn.close()
+
+        def drop_then_interrupt(lock, counts):
+            lock.execute("PRAGMA cache_size = 1")
+            for table in reversed(db.USER_TABLES):
+                lock.execute(f'DROP TABLE "{table}"')
+            raise KeyboardInterrupt
+
+        with mock.patch.object(multiuser, "_drop_user_tables", drop_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                multiuser.adopt_data(self.path, 5)
+        self.assertFalse(db.is_multiuser(self.path))
+        self.assertFalse(db.user_db_path(self.path, 5).exists())
+        check = db.connect(self.path)
+        self.addCleanup(check.close)
+        self.assertEqual(self.counts(check)["collection"], 2)
+
+    def test_unadopted_does_not_claim_safety_when_the_file_is_locked(self):
+        self.build().close()
+        self.assertTrue(multiuser._unadopted(self.path))
+        holder = sqlite3.connect(self.path, isolation_level=None)
+        self.addCleanup(holder.close)
+        holder.execute("BEGIN EXCLUSIVE")
+        self.assertFalse(multiuser._unadopted(self.path, timeout=0.2))
+        holder.execute("ROLLBACK")
+        self.assertTrue(multiuser._unadopted(self.path))
 
     def test_finished_adoption_never_deletes_the_user_file(self):
         self.build().close()

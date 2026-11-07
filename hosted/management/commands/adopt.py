@@ -52,7 +52,7 @@ class Command(BaseCommand):
             result = multiuser.adopt_data(path, user.id)
         except BaseException as exc:
             # Keep the account only when the data has been moved; otherwise a re-run starts clean.
-            if created and not db.is_multiuser(path):
+            if created and multiuser._unadopted(path):
                 user.delete()  # the delete signal removes any user file
             if isinstance(exc, Exception):
                 raise CommandError(f"adopt failed, nothing was changed: {exc}") from exc

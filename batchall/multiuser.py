@@ -13,6 +13,12 @@ from pathlib import Path
 from . import config, db
 
 BACKUP_SUFFIX = ".pre-multiuser"
+LOCK_WAIT = 5.0  # seconds to wait on a locked shared file when checking its state
+
+# adopt stamps the user file it creates with this value in the SQLite header (PRAGMA user_version),
+# written before anything else goes in. Only a file carrying it, or an empty one, may be deleted
+# by adopt, so a file that a live account has been using is never removed. Nothing else reads it.
+ADOPT_MARKER = 0x41444F50  # "ADOP"
 
 
 def adopt_data(path, user_id):
@@ -27,12 +33,18 @@ def adopt_data(path, user_id):
     if db.is_multiuser(path):
         return _already(path, user_id)
 
+    target = db.user_db_path(path, user_id)
+    if target.exists() and not _is_adopt_file(target):
+        raise ValueError(
+            f"{target} already exists and was not created by adopt; it may hold a live account's data. "
+            "Nothing was changed."
+        )
+
     if config.DB_IS_DEFAULT and path == Path(config.DB_PATH):
         db.connect().close()  # also copies the pre-rename database when only that exists
     else:
         db.connect(path).close()  # upgrades an old-schema file
 
-    target = db.user_db_path(path, user_id)
     # Hold the shared file's write lock from before the copy until the tables are dropped, so no
     # edit can land between what was copied and what is removed. Readers are not blocked.
     lock = sqlite3.connect(path, isolation_level=None, timeout=30)
@@ -49,12 +61,12 @@ def adopt_data(path, user_id):
             counts = _copy_user_tables(path, user_id)
             _drop_user_tables(lock, counts)
         except BaseException:
-            # Judge by the committed state: once the drop has committed, the user file is the only
-            # copy of the data and must stay.
-            if _unadopted(path):
-                _remove_user_file(target)
+            # Roll back first (a no-op after a commit), then judge by the committed state: once the
+            # drop has committed, the user file is the only copy of the data and must stay.
             if lock.in_transaction:
                 lock.execute("ROLLBACK")
+            if _unadopted(path):
+                _remove_user_file(target)
             raise
     finally:
         lock.close()
@@ -93,6 +105,9 @@ def _backup(path):
 
 
 def _remove_user_file(target):
+    """Delete a user file, but only one that adopt created."""
+    if Path(target).exists() and not _is_adopt_file(target):
+        return
     for suffix in ("", "-wal", "-shm", "-journal"):
         Path(str(target) + suffix).unlink(missing_ok=True)
 
@@ -122,6 +137,7 @@ def _copy_user_tables(path, user_id):
     conn = sqlite3.connect(target, isolation_level=None)
     conn.row_factory = sqlite3.Row
     try:
+        conn.execute(f"PRAGMA user_version = {ADOPT_MARKER}")  # first write: the file is ours from the start
         conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(db.USER_SCHEMA)
         conn.execute("ATTACH DATABASE ? AS shared", (str(Path(path).resolve()),))
@@ -180,14 +196,45 @@ def _drop_user_tables(lock, expected_counts):
     lock.execute("COMMIT")
 
 
-def _unadopted(path):
-    """True while the committed shared file still has the user tables and no multi-user marker."""
-    if db.is_multiuser(path):
-        return False
-    conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+def _unadopted(path, timeout=None):
+    """True while the committed shared file still has the user tables and no multi-user marker.
+
+    Callers use it to decide whether data may be deleted, so anything unclear (a locked or
+    unreadable file) answers False.
+    """
     try:
-        return conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'collection'"
-        ).fetchone() is not None
+        conn = sqlite3.connect(
+            f"{Path(path).resolve().as_uri()}?mode=ro", uri=True, timeout=LOCK_WAIT if timeout is None else timeout
+        )
+    except sqlite3.Error:
+        return False
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "collection" not in tables:
+            return False
+        if "meta" in tables:
+            row = conn.execute("SELECT value FROM meta WHERE key = 'multiuser'").fetchone()
+            if row is not None and row[0] == "1":
+                return False
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+
+def _is_adopt_file(target):
+    """True when ``target`` was created by adopt: it carries the marker, or is still empty."""
+    target = Path(target)
+    if target.stat().st_size == 0:
+        return True
+    try:
+        conn = sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return False
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0] == ADOPT_MARKER
+    except sqlite3.Error:
+        return False
     finally:
         conn.close()

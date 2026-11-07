@@ -617,7 +617,8 @@ body.has-bulkbar { padding-bottom: 84px; }
   .topbar .tabs { display: none; }
   #account { margin-left: auto; display: flex; align-items: center; gap: 4px; min-width: 0; }
   #account[hidden] { display: none; }
-  #account button { margin-left: 4px; min-height: var(--tap); padding: 4px 12px; }
+  #account .account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #account button { flex: none; margin-left: 4px; min-height: var(--tap); padding: 4px 12px; }
 
   #catalog-status {
     display: block;
@@ -635,7 +636,7 @@ body.has-bulkbar { padding-bottom: 84px; }
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 60;
+    z-index: 40; /* above page content, below the bulk bar and the dialogs (50) */
     height: calc(var(--tap) + var(--safe-bottom));
     padding-bottom: var(--safe-bottom);
     background: var(--surface);

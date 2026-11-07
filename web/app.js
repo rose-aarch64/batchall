@@ -2329,8 +2329,7 @@ function placeCatalogStatus() {
 function showAccount(user) {
   const box = $("account");
   box.replaceChildren(
-    user.display_name || user.handle,
-    " ",
+    h("span", { class: "account-name" }, user.display_name || user.handle),
     h("button", { type: "button", id: "sign-out", onclick: signOut }, "Sign out"),
   );
   box.hidden = false;

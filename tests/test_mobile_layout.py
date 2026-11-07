@@ -208,13 +208,64 @@ class PhoneFoundationTests(unittest.TestCase):
 
     def test_phone_mode_keeps_the_account_box_in_the_top_bar(self):
         b = self.open()
-        b.js(
-            "(() => { const a = document.querySelector('#account'); a.hidden = false; "
-            "a.replaceChildren('Rose ', Object.assign(document.createElement('button'), {id: 'sign-out', textContent: 'Sign out'})); })()"
-        )
+        # showAccount is the app's own function, the one the hosted sign-in path calls.
+        b.js("showAccount({display_name: 'Rose', handle: 'rose'})")
         self.assertTrue(is_visible(b, "#sign-out"))
         self.assertGreaterEqual(b.js("document.querySelector('#sign-out').getBoundingClientRect().height"), 44)
         self.assertEqual(overflow(b), 0)
+
+    def test_a_long_display_name_is_truncated_not_overflowing(self):
+        b = self.open(360, 800)
+        b.js("showAccount({display_name: 'Maximilian ' + 'Wolfgang '.repeat(6), handle: 'max'})")
+        self.assertEqual(overflow(b), 0)
+        box = b.js("(() => { const r = document.querySelector('#sign-out').getBoundingClientRect(); "
+                   "return [r.left, r.right, r.height]; })()")
+        self.assertGreaterEqual(box[0], 0)
+        self.assertLessEqual(box[1], 360)
+        self.assertGreaterEqual(box[2], 44)
+        # The name is cut with an ellipsis on one line, so the top bar stays one button tall.
+        self.assertLessEqual(b.js("document.querySelector('.topbar').getBoundingClientRect().height"), 64)
+        self.assertTrue(b.js("(() => { const n = document.querySelector('#account .account-name'); "
+                             "return !!n && n.scrollWidth > n.clientWidth; })()"))
+
+    def test_dialogs_sit_above_the_tab_bar(self):
+        b = self.open()
+        b.js("(confirmDialog('Remove everything?'), 0)")
+        self.assert_shows(b, ".modal-backdrop")
+        hit = b.js("(() => { const e = document.elementFromPoint(195, window.innerHeight - 4); "
+                   "return !!e && !!e.closest('.modal-backdrop'); })()")
+        self.assertTrue(hit, "the tab bar is painted over the dialog backdrop")
+
+    def test_bulk_bar_sits_above_the_tab_bar(self):
+        b = self.open()
+        b.js("[...document.querySelectorAll('#roster tbody .sel-input')].slice(0, 2).forEach(e => e.click())")
+        self.assert_shows(b, "#bulkbar")
+        bar = b.js("(() => { const r = document.querySelector('#bulkbar').getBoundingClientRect(); "
+                   "return [r.bottom, r.left + r.width / 2, r.top + r.height / 2]; })()")
+        tabs_top = b.js("document.querySelector('#tabbar').getBoundingClientRect().top")
+        self.assertLessEqual(bar[0], tabs_top + 0.5)
+        self.assertTrue(b.js(f"!!document.elementFromPoint({bar[1]}, {bar[2]}).closest('#bulkbar')"))
+
+    def test_plus_tray_adds_to_the_tray_and_the_forces_tab_shows_it(self):
+        b = self.open()
+        before = b.js("document.querySelectorAll('#tray-list li').length")
+        b.click('#roster tbody button[title="Add one to the force tray"]')
+        self.assertEqual(b.js("document.querySelectorAll('#tray-list li').length"), before + 1)
+        b.click('#tabbar [data-tab="forces"]')
+        self.assert_shows(b, "#tray-list li")
+
+    def test_forces_tab_survives_a_resize_to_desktop_and_back(self):
+        b = self.open()
+        b.click('#tabbar [data-tab="forces"]')
+        b.resize(1280, 800)
+        for selector in ("#roster", "#tray", "#forces"):
+            self.assert_shows(b, selector)
+        self.assertEqual(b.js("document.querySelector('.tab.active').dataset.view"), "collection")
+        b.resize(390, 844)
+        self.assertEqual(b.js("document.body.dataset.tab"), "forces")
+        self.assert_shows(b, "#tray")
+        self.assert_shows(b, "#forces")
+        self.assertFalse(is_visible(b, "#roster"))
 
 
 if __name__ == "__main__":

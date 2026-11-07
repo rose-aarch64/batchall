@@ -1317,7 +1317,7 @@ function buildMiniCard(item, mini) {
   });
   remove.innerHTML = CIRCLE_X_SVG;
   const stats = [item.model || null, item.kind === "mech" ? null : kindLabel(item), `${item.tons ?? "?"}t`, `${item.bv} BV`];
-  return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") + (state.selected.has(mini.id) ? " is-selected" : "") },
+  return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") + (editing ? " is-editing" : "") + (state.selected.has(mini.id) ? " is-selected" : "") },
     h("div", { class: "sel-bar" },
       selectBox(item, mini),
       h("div", { class: "sel-title" }), // empty: the mech's name is in the strip under the photo
@@ -1813,7 +1813,7 @@ function syncViewControls() {
   for (const button of bar.querySelectorAll("button[data-compact]")) {
     button.setAttribute("aria-pressed", String((button.dataset.compact === "1") === state.compact));
   }
-  $("density-group").hidden = state.view === "cards";
+  $("density-group").hidden = effectiveView() === "cards";
   $("group-actions").hidden = !isGrouped();
   $("group-by").value = state.groupBy;
   for (const button of $("group-by-group").querySelectorAll("button[data-group]")) {
@@ -1826,14 +1826,21 @@ function syncViewControls() {
   $("view-count").textContent = countText(state.items.length, models);
 }
 
+// The view on screen. A phone always shows cards, since the table is a desktop tool. The saved choice in
+// state.view is left alone, so using a phone never changes what a wide screen shows.
+function effectiveView() {
+  return isPhone() ? "cards" : state.view;
+}
+
 function renderRoster() {
-  document.body.classList.toggle("view-cards", state.view === "cards");
+  const view = effectiveView();
+  document.body.classList.toggle("view-cards", view === "cards");
   // The group header already names the box, so the table's Box column would only repeat it.
-  document.body.classList.toggle("group-by-box", isGrouped() && state.view === "table" && state.groupBy === "box");
-  document.body.classList.toggle("compact", state.compact && state.view !== "cards");
+  document.body.classList.toggle("group-by-box", isGrouped() && view === "table" && state.groupBy === "box");
+  document.body.classList.toggle("compact", state.compact && view !== "cards");
   pruneSelection(); // a mini that is no longer shown leaves the selection
   const items = sortedItems();
-  if (state.view === "cards") renderCards(items); else renderTable(items);
+  if (view === "cards") renderCards(items); else renderTable(items);
   syncViewControls();
   syncSelectionUI();
 }
@@ -1846,6 +1853,8 @@ function setupViewControls() {
   for (const button of bar.querySelectorAll("button[data-compact]")) {
     button.addEventListener("click", () => { state.compact = button.dataset.compact === "1"; savePrefs(); renderRoster(); });
   }
+  // Crossing the phone width swaps between the cards and the saved desktop view.
+  window.matchMedia(PHONE_QUERY).addEventListener("change", renderRoster);
   $("collapse-all").addEventListener("click", () => {
     for (const [name] of groupsOf(state.items)) state.collapsed.add(collapseKey(name));
     savePrefs();
@@ -2247,9 +2256,10 @@ function setupControls() {
 
   let filterTimer = null;
   const refilter = () => { clearTimeout(filterTimer); filterTimer = setTimeout(loadCollection, 200); };
-  for (const id of ["filter-q", "filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company", "filter-material", "filter-kind", "filter-era", "filter-faction", "filter-painted"]) {
+  for (const id of ["filter-q", ...SHEET_FILTER_IDS]) {
     $(id).addEventListener("input", refilter);
   }
+  setupFilterSheet();
   $("toggle-add").addEventListener("click", () => {
     const panel = $("add-panel");
     panel.hidden = !panel.hidden;
@@ -2285,19 +2295,179 @@ function setupControls() {
     });
   }
   for (const tab of document.querySelectorAll(".tab")) {
-    tab.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-      $("view-collection").hidden = tab.dataset.view !== "collection";
-      $("view-import").hidden = tab.dataset.view !== "import";
-    });
+    tab.addEventListener("click", () => setTab(tab.dataset.view));
+  }
+  for (const tab of document.querySelectorAll("#tabbar [data-tab]")) {
+    tab.addEventListener("click", () => setTab(tab.dataset.tab));
+  }
+  const phone = window.matchMedia(PHONE_QUERY);
+  phone.addEventListener("change", placeCatalogStatus);
+  placeCatalogStatus();
+}
+
+const PHONE_QUERY = "(max-width: 640px)";
+
+function isPhone() {
+  return window.matchMedia(PHONE_QUERY).matches;
+}
+
+// ---------- filter sheet ----------
+
+// The filters that live in the phone sheet. The search box stays in the toolbar row.
+const SHEET_FILTER_IDS = ["filter-box", "filter-tag", "filter-copy-faction", "filter-copy-company", "filter-material", "filter-kind", "filter-era", "filter-faction", "filter-painted"];
+
+// Controls of #view-controls that move into the sheet's View section on a phone, in sheet order.
+const SHEET_VIEW_CONTROLS = ["group-by-group", "sort-group"];
+
+function activeFilterCount() {
+  return SHEET_FILTER_IDS.filter((id) => {
+    const el = $(id);
+    return el.type === "checkbox" ? el.checked : el.value.trim() !== "";
+  }).length;
+}
+
+function updateFilterBadge() {
+  const count = activeFilterCount();
+  const badge = $("filter-badge");
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+}
+
+function filterSheetOpen() {
+  return !$("filter-sheet").hidden;
+}
+
+// Everything on the page outside the sheet and its backdrop, while the sheet is open. The sheet sits
+// inside the page's own markup, so this is the siblings of the sheet and of each of its ancestors.
+let inertBehindSheet = [];
+
+function makePageInert() {
+  const sheet = $("filter-sheet");
+  for (let node = sheet; node !== document.body; node = node.parentElement) {
+    for (const sibling of node.parentElement.children) {
+      if (sibling === node || sibling === $("sheet-backdrop") || sibling.inert) continue;
+      sibling.inert = true;
+      inertBehindSheet.push(sibling);
+    }
+  }
+}
+
+function restorePage() {
+  for (const el of inertBehindSheet) el.inert = false;
+  inertBehindSheet = [];
+}
+
+function openFilterSheet() {
+  if (!isPhone() || filterSheetOpen()) return;
+  const sheet = $("filter-sheet");
+  // The sheet is a dialog only while it is open on a phone. Wider, it is part of the toolbar.
+  sheet.setAttribute("role", "dialog");
+  sheet.setAttribute("aria-modal", "true");
+  sheet.hidden = false;
+  $("sheet-backdrop").hidden = false;
+  $("open-filters").setAttribute("aria-expanded", "true");
+  makePageInert();
+  $("filter-box").focus({ preventScroll: true });
+}
+
+function closeFilterSheet(returnFocus = true) {
+  if (!filterSheetOpen()) return;
+  const sheet = $("filter-sheet");
+  sheet.hidden = true;
+  sheet.removeAttribute("role");
+  sheet.removeAttribute("aria-modal");
+  $("sheet-backdrop").hidden = true;
+  $("open-filters").setAttribute("aria-expanded", "false");
+  restorePage(); // before focus moves back, since an inert button cannot take focus
+  if (returnFocus) $("open-filters").focus();
+}
+
+function clearSheetFilters() {
+  for (const id of SHEET_FILTER_IDS) {
+    const el = $(id);
+    if (el.type === "checkbox") el.checked = false; else el.value = "";
+  }
+  // The same event a typed change raises, so the collection reloads and the badge updates as they do.
+  $("filter-kind").dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// The View controls are the page's own elements. They move into the sheet on a phone and back to
+// their place in #view-controls on a wider screen, so ids and listeners stay as they are.
+function placeViewControls(anchors) {
+  const section = $("sheet-view");
+  for (const id of SHEET_VIEW_CONTROLS) {
+    const el = $(id);
+    if (isPhone()) section.append(el); else anchors.get(el).before(el);
+  }
+}
+
+function setupFilterSheet() {
+  // Each control goes back before the element that followed it in #view-controls.
+  const anchors = new Map(SHEET_VIEW_CONTROLS.map((id) => [$(id), $(id).nextElementSibling]));
+  const sheet = $("filter-sheet");
+  const toolbar = document.querySelector("#view-collection > .toolbar");
+
+  $("open-filters").addEventListener("click", openFilterSheet);
+  $("sheet-done").addEventListener("click", () => closeFilterSheet());
+  $("sheet-backdrop").addEventListener("click", () => closeFilterSheet());
+  $("filters-clear").addEventListener("click", clearSheetFilters);
+  toolbar.addEventListener("input", updateFilterBadge);
+  toolbar.addEventListener("change", updateFilterBadge);
+
+  // Capture phase, so Escape closes the sheet before the page-level handlers see it.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !filterSheetOpen() || document.querySelector(".modal-backdrop")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeFilterSheet();
+  }, true);
+
+  // Keep the field being typed in clear of the on-screen keyboard.
+  const reveal = (el) => {
+    if (isPhone() && el?.matches?.("input, select, textarea")) el.scrollIntoView({ block: "center" });
+  };
+  sheet.addEventListener("focusin", (e) => reveal(e.target));
+  window.visualViewport?.addEventListener("resize", () => {
+    if (filterSheetOpen() && sheet.contains(document.activeElement)) reveal(document.activeElement);
+  });
+
+  window.matchMedia(PHONE_QUERY).addEventListener("change", () => {
+    placeViewControls(anchors);
+    if (!isPhone()) closeFilterSheet(false);
+  });
+  placeViewControls(anchors);
+  updateFilterBadge();
+}
+
+// name is "collection", "forces" or "import". On a wide screen the tray and the saved forces are always
+// on the page, so "forces" shows the collection view there. On a phone, CSS keyed on body[data-tab]
+// decides what each tab shows.
+function setTab(name) {
+  document.body.dataset.tab = name;
+  const wide = name === "import" ? "import" : "collection";
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === wide));
+  document.querySelectorAll("#tabbar [data-tab]").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === name)));
+  $("view-collection").hidden = wide !== "collection";
+  $("view-import").hidden = wide !== "import";
+}
+
+// On a phone the catalog status is a small line in the Collection tab. Elsewhere it stays in the top bar.
+// There is one element, moved between the two places.
+function placeCatalogStatus() {
+  const status = $("catalog-status");
+  if (isPhone()) {
+    const toolbar = document.querySelector("#view-collection > .toolbar");
+    if (status.parentElement !== toolbar.parentElement) toolbar.after(status);
+  } else {
+    const top = document.querySelector(".topbar");
+    if (status.parentElement !== top) top.insertBefore(status, $("account"));
   }
 }
 
 function showAccount(user) {
   const box = $("account");
   box.replaceChildren(
-    user.display_name || user.handle,
-    " ",
+    h("span", { class: "account-name" }, user.display_name || user.handle),
     h("button", { type: "button", id: "sign-out", onclick: signOut }, "Sign out"),
   );
   box.hidden = false;

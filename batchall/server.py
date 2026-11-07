@@ -605,6 +605,17 @@ def make_server(port=config.DEFAULT_PORT, host="127.0.0.1", db_path=None, art_di
     return server
 
 
+def server_url(host, port):
+    """The address to open for a server started with `host`. A wildcard or loopback bind is opened as
+    localhost, since that is the only name a wildcard bind accepts; any other host is shown as given."""
+    name = (host or "").lower()
+    if name in WILDCARD_HOSTS or name in LOCAL_HOSTS:
+        name = "localhost"
+    elif ":" in name:
+        name = f"[{name}]"  # an IPv6 address
+    return f"http://{name}:{port}/"
+
+
 def serve(port=config.DEFAULT_PORT, host="127.0.0.1", db_path=None, art_dir=None):
     conn = db.connect(db_path)
     try:
@@ -612,7 +623,7 @@ def serve(port=config.DEFAULT_PORT, host="127.0.0.1", db_path=None, art_dir=None
     finally:
         conn.close()
     server = make_server(port, host, db_path, art_dir)
-    print(f"Batchall running at http://localhost:{server.server_address[1]}/")
+    print(f"Batchall running at {server_url(host, server.server_address[1])}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

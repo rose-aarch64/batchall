@@ -58,7 +58,7 @@ as a backup, and nothing is copied again once `data/batchall.db` exists. The old
 ```
 python3 -m batchall serve                          # http://localhost:8765/
 python3 -m batchall serve --port 9000              # different port
-python3 -m batchall serve --host 0.0.0.0           # reachable from other machines (see warning)
+python3 -m batchall serve --host 192.168.1.20      # reachable from other machines at that address (see below)
 BATCHALL_DB=/path/to/other.db python3 -m batchall serve  # use a different database
 ```
 
@@ -69,8 +69,15 @@ means only the machine running it can connect.
 Run `catalog import` once before the first start. Without it the UI loads but the catalog is empty
 and the UI shows "Catalog not loaded". The collection is kept when you re-import the catalog.
 
-The server has no login. Only use `--host 0.0.0.0` on a network you trust, since anyone who can reach
-the port can read and change the collection.
+To open it from another device, such as a phone, start it on this machine's own network address (the
+`192.168.1.20` above is an example) and open that same address on the other device. The server only
+answers to `localhost` and to the exact address it was started on. With `--host 0.0.0.0` it listens on
+every interface but still answers only to `localhost`, so another device gets "forbidden host". Starting
+on a network address can take several seconds on some machines while Python looks the address up, and
+the server prints its address once it is ready.
+
+The server has no login. Only start it on a network address on a network you trust, since anyone who can
+reach the port can read and change the collection.
 
 The global `--db` option goes before the command and works with `serve`:
 `python3 -m batchall --db /path/to/other.db serve`. Setting `BATCHALL_DB` (or `BATCHALL_DATA_DIR`) as shown above does the same.

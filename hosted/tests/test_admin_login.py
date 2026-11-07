@@ -83,6 +83,40 @@ class AdminLoginRateLimitTests(TestCase):
             self.admin_login(username="  Rose ")
         self.assertEqual(self.admin_login(username="rose").status_code, 429)
 
+    def test_fullwidth_spelling_cannot_get_around_a_lock(self):
+        for _ in range(5):
+            self.admin_login()
+        self.assertEqual(self.admin_login().status_code, 429)
+        response = self.admin_login(username="ｒｏｓｅ", password=PASSWORD)
+        self.assertEqual(response.status_code, 429)
+
+    def test_fullwidth_failures_count_against_the_plain_handle(self):
+        spellings = ["ｒｏｓｅ", "rose", "ｒｏｓｅ", "rose", "ｒｏｓｅ"]
+        for username in spellings:
+            self.assertEqual(self.admin_login(username=username).status_code, 200)
+        self.assertEqual(self.admin_login(username="rose", password=PASSWORD).status_code, 429)
+
+    def test_mixed_spelling_is_handled_the_same_way(self):
+        for _ in range(5):
+            self.admin_login()
+        response = self.admin_login(username="ｒose", password=PASSWORD)
+        self.assertEqual(response.status_code, 429)
+        self.reset_and_fail_with_mixed()
+
+    def reset_and_fail_with_mixed(self):
+        reset_limiters()
+        for _ in range(5):
+            self.assertEqual(self.admin_login(username="ｒose").status_code, 200)
+        self.assertEqual(self.admin_login(username="rose", password=PASSWORD).status_code, 429)
+
+    def test_missing_and_nul_usernames_use_the_fixed_key(self):
+        for _ in range(3):
+            self.client.post("/admin/login/", {"password": "x", "next": "/admin/"}, REMOTE_ADDR=IP_A)
+        self.assertEqual(self.admin_login(username="ro\x00se").status_code, 200)
+        self.assertEqual(self.admin_login(username="！").status_code, 200)
+        self.assertEqual(self.admin_login(username="!").status_code, 429)
+        self.assertEqual(self.admin_login(username="rose", password=PASSWORD, ip=IP_B).status_code, 302)
+
     def test_locked_callers_do_not_record_failures(self):
         for _ in range(5):
             self.admin_login()

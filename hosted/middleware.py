@@ -1,3 +1,5 @@
+import unicodedata
+
 from django.http import HttpResponse
 
 CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"
@@ -5,6 +7,20 @@ ADMIN_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-
 
 
 ADMIN_LOGIN_PATH = "/admin/login/"
+
+
+def _authenticated_spelling(raw):
+    """The username as the admin form authenticates it (Unicode NFKC), so equivalent spellings share a key.
+
+    Anything that is not text, or that cannot be normalized, is returned unchanged and ends up under
+    the fixed invalid-handle key.
+    """
+    if not isinstance(raw, str):
+        return raw
+    try:
+        return unicodedata.normalize("NFKC", raw)
+    except Exception:
+        return raw
 
 
 class AdminLoginLimitMiddleware:
@@ -22,7 +38,7 @@ class AdminLoginLimitMiddleware:
             return self.get_response(request)
         from hosted import authviews
 
-        handle = authviews.login_handle(request.POST.get("username"))
+        handle = authviews.login_handle(_authenticated_spelling(request.POST.get("username")))
         ip = authviews.client_ip(request)
         wait = authviews.login_retry_after(handle, ip)
         if wait > 0:

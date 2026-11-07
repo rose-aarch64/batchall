@@ -153,6 +153,32 @@ class AdoptCommandTests(TestCase):
         self.addCleanup(check.close)
         self.assertEqual(check.execute("SELECT unit_uuid FROM collection").fetchall(), [("u-condor",)])
 
+    def test_a_new_account_whose_id_has_an_unmarked_file_leaves_the_file_alone(self):
+        probe = accounts.create_user("probe-user", PASSWORD)
+        next_id = probe.id + 1
+        probe.delete()
+        live = db.connect_user(next_id, self.path)
+        with live:
+            live.execute("INSERT INTO collection (unit_uuid, qty) VALUES ('u-condor', 3)")
+        live.close()
+        with self.assertRaises(CommandError):
+            self.run_adopt()
+        self.assertEqual(User.objects.count(), 0)
+        self.assertFalse(db.is_multiuser(self.path))
+        check = sqlite3.connect(db.user_db_path(self.path, next_id))
+        self.addCleanup(check.close)
+        self.assertEqual(check.execute("SELECT unit_uuid FROM collection").fetchall(), [("u-condor",)])
+
+    def test_deleting_an_account_removes_all_its_data_files(self):
+        user = accounts.create_user("gone-soon", PASSWORD)
+        target = db.user_db_path(self.path, user.id)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        names = [str(target) + suffix for suffix in ("", "-wal", "-shm", "-journal")]
+        for name in names:
+            Path(name).write_bytes(b"x")
+        user.delete()
+        self.assertEqual([n for n in names if Path(n).exists()], [])
+
     def test_an_interrupt_while_the_database_is_locked_keeps_the_account(self):
         holder = sqlite3.connect(self.path, isolation_level=None)
         self.addCleanup(holder.close)

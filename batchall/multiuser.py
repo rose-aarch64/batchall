@@ -7,6 +7,7 @@ the copy has been verified, and the removal happens in one transaction together 
 """
 
 import sqlite3
+import struct
 import time
 from pathlib import Path
 
@@ -19,6 +20,10 @@ LOCK_WAIT = 5.0  # seconds to wait on a locked shared file when checking its sta
 # written before anything else goes in. Only a file carrying it, or an empty one, may be deleted
 # by adopt, so a file that a live account has been using is never removed. Nothing else reads it.
 ADOPT_MARKER = 0x41444F50  # "ADOP"
+
+
+class UserFileInTheWay(ValueError):
+    """A user file that adopt did not create is already at the target path. Nothing was changed."""
 
 
 def adopt_data(path, user_id):
@@ -35,7 +40,7 @@ def adopt_data(path, user_id):
 
     target = db.user_db_path(path, user_id)
     if target.exists() and not _is_adopt_file(target):
-        raise ValueError(
+        raise UserFileInTheWay(
             f"{target} already exists and was not created by adopt; it may hold a live account's data. "
             "Nothing was changed."
         )
@@ -223,18 +228,27 @@ def _unadopted(path, timeout=None):
         conn.close()
 
 
+def _read_marker(target):
+    """The file's ``user_version`` read from the raw header, or None if it is not a SQLite file.
+
+    No connection is opened: a read-only connection cannot roll back a hot journal left by a killed
+    run, and the marker was committed before the copy began, so the header bytes are valid anyway.
+    """
+    try:
+        with open(target, "rb") as handle:
+            header = handle.read(100)
+    except OSError:
+        return None
+    if len(header) < 100 or not header.startswith(b"SQLite format 3\x00"):
+        return None
+    return struct.unpack(">I", header[60:64])[0]
+
+
 def _is_adopt_file(target):
     """True when ``target`` was created by adopt: it carries the marker, or is still empty."""
-    target = Path(target)
-    if target.stat().st_size == 0:
-        return True
     try:
-        conn = sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True)
-    except sqlite3.Error:
+        if Path(target).stat().st_size == 0:
+            return True
+    except OSError:
         return False
-    try:
-        return conn.execute("PRAGMA user_version").fetchone()[0] == ADOPT_MARKER
-    except sqlite3.Error:
-        return False
-    finally:
-        conn.close()
+    return _read_marker(target) == ADOPT_MARKER

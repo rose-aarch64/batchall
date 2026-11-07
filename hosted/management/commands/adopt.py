@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 
 from batchall import config, db, multiuser
-from hosted import accounts
+from hosted import accounts, signals
 
 
 class Command(BaseCommand):
@@ -53,7 +53,11 @@ class Command(BaseCommand):
         except BaseException as exc:
             # Keep the account only when the data has been moved; otherwise a re-run starts clean.
             if created and multiuser._unadopted(path):
-                user.delete()  # the delete signal removes any user file
+                if isinstance(exc, multiuser.UserFileInTheWay):
+                    with signals.keep_user_files():  # that file is not ours to remove
+                        user.delete()
+                else:
+                    user.delete()  # the delete signal removes any user file
             if isinstance(exc, Exception):
                 raise CommandError(f"adopt failed, nothing was changed: {exc}") from exc
             raise

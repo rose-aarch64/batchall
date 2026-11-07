@@ -1,5 +1,7 @@
 """Remove a user's data files when the account is deleted."""
 
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from django.conf import settings
@@ -9,9 +11,24 @@ from django.dispatch import receiver
 
 from batchall import db
 
+_state = threading.local()
+
+
+@contextmanager
+def keep_user_files():
+    """Delete accounts inside this block without removing their data files."""
+    previous = getattr(_state, "keep", False)
+    _state.keep = True
+    try:
+        yield
+    finally:
+        _state.keep = previous
+
 
 @receiver(post_delete, sender=get_user_model(), dispatch_uid="batchall-remove-user-data")
 def remove_user_data(sender, instance, **kwargs):
+    if getattr(_state, "keep", False):
+        return
     path = db.user_db_path(settings.BATCHALL_SHARED_DB, instance.pk)
-    for suffix in ("", "-wal", "-shm"):
+    for suffix in ("", "-wal", "-shm", "-journal"):
         Path(str(path) + suffix).unlink(missing_ok=True)

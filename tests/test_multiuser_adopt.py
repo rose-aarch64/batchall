@@ -1,4 +1,6 @@
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -315,6 +317,67 @@ class AdoptDataTests(unittest.TestCase):
         user = db.connect_user(5, self.path)
         self.addCleanup(user.close)
         self.assertEqual(user.execute("SELECT COUNT(*) FROM collection WHERE unit_uuid = 'u-junk'").fetchone()[0], 0)
+
+    KILL_AFTER_INSERTS = (
+        "import os, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from batchall import multiuser\n"
+        "multiuser._mismatches = lambda source, copied: os._exit(9)\n"
+        "multiuser.adopt_data(sys.argv[2], 5)\n"
+    )
+
+    def kill_mid_copy(self):
+        """Run adopt in a child that dies inside the user-file transaction, leaving a hot journal."""
+        conn = self.build()
+        with conn:  # one large photo, so the copy spills to the file and a journal is written
+            conn.execute("UPDATE mini_photos SET data = zeroblob(20000000)")
+        conn.close()
+        root = str(Path(__file__).resolve().parent.parent)
+        done = subprocess.run(
+            [sys.executable, "-I", "-c", self.KILL_AFTER_INSERTS, root, str(self.path)],
+            capture_output=True,
+        )
+        self.assertEqual(done.returncode, 9, done.stderr.decode())
+        target = db.user_db_path(self.path, 5)
+        journal = Path(str(target) + "-journal")
+        self.assertTrue(target.is_file())
+        self.assertTrue(journal.is_file(), "the child left no hot journal, so the setup proves nothing")
+        return target, journal
+
+    def test_rerun_after_a_hard_kill_during_the_copy_succeeds(self):
+        self.kill_mid_copy()
+        self.assertFalse(db.is_multiuser(self.path))
+        result = multiuser.adopt_data(self.path, 5)
+        self.assertFalse(result["already"])
+        self.assertEqual(result["counts"], {t: n for t, n in zip(db.USER_TABLES, (2, 3, 1, 1, 2, 1, 1))})
+        user = db.connect_user(5, self.path)
+        self.addCleanup(user.close)
+        self.assertEqual(self.counts(user), result["counts"])
+        self.assertEqual(len(user.execute("SELECT data FROM mini_photos").fetchone()[0]), 20000000)
+
+    def test_the_marker_is_read_from_the_header_even_with_a_hot_journal(self):
+        target, journal = self.kill_mid_copy()
+        self.assertEqual(multiuser._read_marker(target), multiuser.ADOPT_MARKER)
+        plain = Path(self._tmp.name) / "plain.db"
+        conn = sqlite3.connect(plain)
+        conn.execute("CREATE TABLE t (x)")
+        conn.commit()
+        conn.close()
+        self.assertEqual(multiuser._read_marker(plain), 0)
+        short = Path(self._tmp.name) / "short.db"
+        short.write_bytes(b"SQLite format 3\x00")
+        self.assertIsNone(multiuser._read_marker(short))
+        other = Path(self._tmp.name) / "other.db"
+        other.write_bytes(b"x" * 200)
+        self.assertIsNone(multiuser._read_marker(other))
+        self.assertIsNone(multiuser._read_marker(Path(self._tmp.name) / "missing.db"))
+
+    def test_the_refusal_has_its_own_exception_type(self):
+        self.build().close()
+        live = db.connect_user(5, self.path)
+        live.close()
+        with self.assertRaises(multiuser.UserFileInTheWay):
+            multiuser.adopt_data(self.path, 5)
 
     def test_the_finished_user_file_keeps_working(self):
         self.build().close()

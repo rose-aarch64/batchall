@@ -24,6 +24,28 @@ STARTUP_SECONDS = 10
 RENDER_SECONDS = 10
 CALL_TIMEOUT = 30
 
+DEFAULT_READY_JS = """
+(() => {
+  const status = document.querySelector('#catalog-status');
+  if (!status || status.textContent.trim() === '') return false;
+  if (document.querySelector('#roster tbody tr, .mini-card')) return true;
+  const empty = document.querySelector('#roster-empty');
+  return !!empty && !empty.hidden;
+})()
+"""
+
+# A function expression (el) => boolean: true when the element is really on screen to the eye.
+# Unlike offsetParent, this is true for position:fixed elements.
+IS_VISIBLE_JS = """
+(el) => {
+  if (!el || el.getClientRects().length === 0) return false;
+  const style = getComputedStyle(el);
+  if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) return false;
+  const box = el.getBoundingClientRect();
+  return box.width > 0 && box.height > 0;
+}
+"""
+
 
 def chrome_path():
     """The first Chrome or Chromium binary found on PATH, or None."""
@@ -215,19 +237,23 @@ class Browser:
         )
         self.ws.send("Emulation.setTouchEmulationEnabled", enabled=self.mobile)
 
-    def open(self, url):
-        """Navigate to url and wait until the page has loaded and the app has rendered."""
-        self.ws.events = [e for e in self.ws.events if e["method"] != "Page.loadEventFired"]
+    def open(self, url, ready=None):
+        """Navigate to url and wait until the page has loaded and the app has rendered.
+
+        By default the app counts as rendered when #catalog-status has text and the collection has been
+        drawn: table rows, cards, or the empty-collection message. Pass ready (a JavaScript expression)
+        to wait for something else, such as the sign-in page.
+        """
+        # Console output from the previous page does not count against this one.
+        quiet = ("Runtime.consoleAPICalled", "Log.entryAdded", "Page.loadEventFired")
+        self.ws.events = [e for e in self.ws.events if e["method"] not in quiet]
         self.ws.send("Page.navigate", url=url)
         if self.ws.wait_event("Page.loadEventFired", RENDER_SECONDS) is None:
             raise RuntimeError(f"{url} did not finish loading within {RENDER_SECONDS} seconds")
-        ready = (
-            "!!document.querySelector('#catalog-status') "
-            "&& document.querySelector('#catalog-status').textContent.trim() !== ''"
-        )
+        condition = ready or DEFAULT_READY_JS
         deadline = time.monotonic() + RENDER_SECONDS
         while time.monotonic() < deadline:
-            if self.js(ready):
+            if self.js(condition):
                 return
             time.sleep(0.1)
         raise RuntimeError(f"{url} loaded but the app did not render within {RENDER_SECONDS} seconds")
@@ -344,9 +370,10 @@ def overflow(browser):
 _SMALL_TARGETS_JS = """
 (minimum) => {
   const out = [];
+  const isVisible = __IS_VISIBLE__;
   const nodes = document.querySelectorAll('button, a[href], input, select, textarea, [role=button]');
   for (const el of nodes) {
-    if (el.offsetParent === null) continue;
+    if (!isVisible(el)) continue;
     if (el.closest('.table-wrap')) continue;
     if (el.tagName === 'INPUT' && el.type === 'hidden') continue;
     let r = el.getBoundingClientRect();
@@ -367,4 +394,14 @@ _SMALL_TARGETS_JS = """
 
 def small_targets(browser, minimum=44):
     """Visible controls (outside .table-wrap) whose box is shorter or narrower than minimum pixels."""
-    return browser.js(f"({_SMALL_TARGETS_JS})({int(minimum)})")
+    script = _SMALL_TARGETS_JS.replace("__IS_VISIBLE__", IS_VISIBLE_JS)
+    return browser.js(f"({script})({int(minimum)})")
+
+
+def is_visible(browser, selector):
+    """True when the first element matching selector exists and is really visible."""
+    return bool(
+        browser.js(
+            f"({IS_VISIBLE_JS})(document.querySelector({json.dumps(selector)}))"
+        )
+    )

@@ -4,13 +4,14 @@ These views use no session or cookie. The token alone picks the owner, and ``req
 read, so a signed-in visitor sees the token owner's data and cannot write to it either.
 """
 
+import threading
 from http import HTTPStatus
 
 from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from batchall import db, server
+from batchall import db, formations, server
 from hosted import api, pages, sharing
 
 # Every GET the shared page needs, plus the force builder, which stores nothing. Built from the
@@ -41,6 +42,14 @@ ALLOWED = frozenset(
     ]
 )
 
+# A visitor's build runs the same CPU-bound search as the owner's, in the same process, so it is
+# bounded. The size ceiling is the largest formation (a company); the BV ceiling is above the
+# twelve highest-BV units in the catalog together (about 47,000).
+MAX_BUILD_SIZE = max(f.size for f in formations.FORMATIONS.values())
+MAX_BUILD_TARGET_BV = 50_000
+BUILD_RETRY_SECONDS = 5
+build_slot = threading.Semaphore(1)
+
 
 def _not_found():
     """The one answer for every link that does not lead to a collection, whatever the reason."""
@@ -51,6 +60,36 @@ def _not_found():
 
 def _owner_name(user):
     return user.first_name or user.get_username()
+
+
+def _over(value, ceiling):
+    """True when value is a number above ceiling. Values that are not numbers are left to the handler."""
+    try:
+        return int(value) > ceiling
+    except OverflowError:
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _build(request, api_path, open_conn):
+    """Run a visitor's build: bounded in size and target, and one at a time per process."""
+    try:
+        body = api._read_body(request)
+    except server.ApiError as exc:
+        return api._error(str(exc), exc.status)
+    if body.get("size") and _over(body["size"], MAX_BUILD_SIZE):
+        return api._error(f"size must be at most {MAX_BUILD_SIZE}", HTTPStatus.BAD_REQUEST)
+    if _over(body.get("target_bv"), MAX_BUILD_TARGET_BV):
+        return api._error(f"target_bv must be at most {MAX_BUILD_TARGET_BV}", HTTPStatus.BAD_REQUEST)
+    if not build_slot.acquire(blocking=False):
+        response = api._error("another build is running, try again shortly", HTTPStatus.TOO_MANY_REQUESTS)
+        response["Retry-After"] = str(BUILD_RETRY_SECONDS)
+        return response
+    try:
+        return api.dispatch(request, api_path, allowed=ALLOWED, open_conn=open_conn)
+    finally:
+        build_slot.release()
 
 
 @csrf_exempt
@@ -70,9 +109,10 @@ def shared_view(request, token, path):
         response = JsonResponse({"mode": "shared", "owner": _owner_name(owner)})
         response["Cache-Control"] = api.NO_STORE
         return response
-    return api.dispatch(
-        request,
-        api_path,
-        allowed=ALLOWED,
-        open_conn=lambda: db.connect_user_readonly(owner.id, shared_db),
-    )
+    def open_conn():
+        return db.connect_user_readonly(owner.id, shared_db)
+
+    handler, _, _ = api._match(request, api_path, ALLOWED)
+    if handler is server.post_build:
+        return _build(request, api_path, open_conn)
+    return api.dispatch(request, api_path, allowed=ALLOWED, open_conn=open_conn)

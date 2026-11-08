@@ -1,3 +1,5 @@
+from unittest import mock
+
 from django.test import Client
 
 from hosted.tests.share_fixture import PASSWORD, ShareFixture
@@ -87,6 +89,50 @@ class SharedApiTests(ShareFixture):
         response = self.client.post(f"{self.base}/api/build", BUILD, content_type="application/json")
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(self.snapshot_alice(), before)
+
+    def test_build_accepts_the_largest_formation_and_target(self):
+        body = {"target_bv": shared.MAX_BUILD_TARGET_BV, "size": shared.MAX_BUILD_SIZE}
+        response = self.client.post(f"{self.base}/api/build", body, content_type="application/json")
+        # Alice's one Atlas cannot fill a company, so the builder answers; the ceiling must not.
+        self.assertIn("pool cannot fill", response.json()["error"])
+
+    def test_build_rejects_an_oversized_target(self):
+        for target in (shared.MAX_BUILD_TARGET_BV + 1, "1e400"):
+            with self.subTest(target=target):
+                raw = f'{{"target_bv": {target}, "size": 1}}'
+                response = self.client.post(f"{self.base}/api/build", raw, content_type="application/json")
+                self.assertEqual(response.status_code, 400, response.content)
+                self.assertIn("target_bv", response.json()["error"])
+
+    def test_build_rejects_an_oversized_size(self):
+        body = {"target_bv": 2000, "size": shared.MAX_BUILD_SIZE + 1}
+        response = self.client.post(f"{self.base}/api/build", body, content_type="application/json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("size", response.json()["error"])
+
+    def test_owner_build_route_has_no_shared_limits(self):
+        self.client.force_login(self.alice)
+        body = {"target_bv": 2000, "size": shared.MAX_BUILD_SIZE + 1}
+        response = self.client.post("/api/build", body, content_type="application/json")
+        self.assertNotIn("at most", response.content.decode())
+
+    def test_a_second_concurrent_build_gets_429(self):
+        self.assertTrue(shared.build_slot.acquire(blocking=False))
+        try:
+            response = self.client.post(f"{self.base}/api/build", BUILD, content_type="application/json")
+        finally:
+            shared.build_slot.release()
+        self.assertEqual(response.status_code, 429)
+        self.assertIn("error", response.json())
+        self.assertTrue(response["Retry-After"].isdigit())
+        self.assertEqual(self.client.post(f"{self.base}/api/build", BUILD, content_type="application/json").status_code, 200)
+
+    def test_build_slot_is_released_when_the_build_raises(self):
+        with mock.patch.object(shared.api, "dispatch", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                self.client.post(f"{self.base}/api/build", BUILD, content_type="application/json")
+        self.assertTrue(shared.build_slot.acquire(blocking=False))
+        shared.build_slot.release()
 
     def test_build_needs_no_csrf_token(self):
         client = Client(enforce_csrf_checks=True)

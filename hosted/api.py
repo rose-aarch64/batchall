@@ -76,7 +76,8 @@ def bad_request(request, exception=None):
     return _error("bad request", HTTPStatus.BAD_REQUEST)
 
 
-def api(request, path):
+def _match(request, path, allowed=None):
+    """Find the route for this request. Returns (handler, match, None) or (None, None, error response)."""
     full_path = "/api/" + path
     matches = []
     for route_method, pattern, handler in server.ROUTES:
@@ -84,17 +85,40 @@ def api(request, path):
         if found:
             matches.append((route_method, handler, found))
     if not matches:
-        return _error("no such endpoint", HTTPStatus.NOT_FOUND)
-    chosen = [m for m in matches if m[0] == request.method]
+        return None, None, _error("no such endpoint", HTTPStatus.NOT_FOUND)
+    chosen = [m for m in matches if m[0] == request.method and (allowed is None or (m[0], m[1]) in allowed)]
     if not chosen:
-        return _error("no such endpoint", HTTPStatus.METHOD_NOT_ALLOWED)
+        return None, None, _error("no such endpoint", HTTPStatus.METHOD_NOT_ALLOWED)
     _, handler, found = chosen[0]
+    return handler, found, None
+
+
+def api(request, path):
+    # Route errors (404/405) come before the sign-in check, as they always have.
+    _, _, failure = _match(request, path)
+    if failure is not None:
+        return failure
 
     if not request.user.is_authenticated:
         return _error("sign in required", HTTPStatus.UNAUTHORIZED)
 
     if not db.is_multiuser(settings.BATCHALL_SHARED_DB):
         return _error("the server is not set up: run manage.py adopt", HTTPStatus.SERVICE_UNAVAILABLE)
+
+    return dispatch(
+        request, path, open_conn=lambda: db.connect_user(request.user.id, settings.BATCHALL_SHARED_DB)
+    )
+
+
+def dispatch(request, path, *, open_conn, allowed=None):
+    """Run the matched handler on the connection from ``open_conn``.
+
+    ``allowed`` is None (every route) or a set of (method, handler) pairs; other routes get a 405.
+    """
+    full_path = "/api/" + path
+    handler, found, failure = _match(request, path, allowed)
+    if failure is not None:
+        return failure
 
     try:
         body = _read_body(request) if request.method in BODY_METHODS else {}
@@ -103,7 +127,10 @@ def api(request, path):
 
     query = urllib.parse.parse_qs(request.META.get("QUERY_STRING", ""), keep_blank_values=False)
     groups = found.groups()
-    conn = db.connect_user(request.user.id, settings.BATCHALL_SHARED_DB)
+    try:
+        conn = open_conn()
+    except FileNotFoundError:
+        return _error("not found", HTTPStatus.NOT_FOUND)
     try:
         table = server.OWNED_ID_ROUTES.get(handler)
         if table is not None:

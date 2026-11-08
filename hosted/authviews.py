@@ -10,7 +10,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 from batchall.ratelimit import RateLimiter
-from hosted import accounts
+from hosted import accounts, sharing
 from hosted.accounts import AccountError
 
 pair_limiter = RateLimiter(5, 300, 300)  # keyed by (handle, ip)
@@ -224,6 +224,22 @@ def change_password(request):
     user.save(update_fields=["password"])
     update_session_auth_hash(request, user)
     return JsonResponse({"ok": True})
+
+
+def _share_dict(link):
+    return {"url": sharing.link_path(link) if link else None}
+
+
+@api("GET", "POST", "DELETE")
+@ensure_csrf_cookie
+def share(request):
+    user = _require_user(request)
+    if request.method == "POST":
+        return JsonResponse(_share_dict(sharing.create_link(user)))
+    if request.method == "DELETE":
+        sharing.revoke_link(user)
+        return JsonResponse(_share_dict(None))
+    return JsonResponse(_share_dict(sharing.current_link(user)))
 
 
 @api("DELETE")

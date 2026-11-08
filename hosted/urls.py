@@ -15,6 +15,7 @@ urlpatterns = [
     path("api/auth/me", authviews.me),
     path("api/auth/password", authviews.change_password),
     path("api/auth/account", authviews.delete_account),
+    path("api/auth/share", authviews.share),
     re_path(rf"^s/(?P<token>{TOKEN_PATTERN})/(?P<path>.*)$", shared.shared_view),
     re_path(r"^api/(?P<path>.*)$", api_module.api),
     re_path(r"^(?P<path>.*)$", pages.page),

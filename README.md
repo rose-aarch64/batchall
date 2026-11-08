@@ -1,7 +1,8 @@
 # Batchall
 
 Batchall tracks the BattleTech miniatures you own and builds forces from them at a target Battle Value (BV).
-Python 3.12 standard library only. No packages to install.
+
+Batchall comes in two versions. The default runs on your own machine, needs only Python 3.12, and keeps one collection with no login. The hosted version uses Django: people sign in, each keeps their own collection, and they can share it by link. See [Hosting for several people](#hosting-for-several-people). The sections below cover the single-user version unless they say otherwise.
 
 ## Screenshots
 
@@ -15,12 +16,14 @@ paint progress. A mini can carry its own photo, which takes the place of the uni
 The details panel is a larger version of the card, with the unit's stats, weapons and lore. The lore sections
 start folded.
 
-<img src="docs/screenshots/photo-crop.png" alt="Choosing the crop of a mini photo" width="300">
-<img src="docs/screenshots/logo-and-color.png" alt="Choosing a company's logo and strip color" width="300">
+![Choosing the crop of a mini photo](docs/screenshots/photo-crop.png)
 
-Left: a mini's photo is cropped by dragging and zooming, and the whole photo is kept so the crop can be changed
-later. Right: the logo and color dialog looks a company's logo up on Sarna, and offers strip colors, including
-colors taken from the faction logos.
+A mini's photo is cropped by dragging and zooming. The whole photo is kept, so the crop can be changed later.
+
+![Choosing a company's logo and strip color](docs/screenshots/logo-and-color.png)
+
+The logo and color dialog looks a company's logo up on Sarna and offers strip colors, including colors taken
+from the faction logos.
 
 The photos are the author's own. The unit line art and the faction and company logos belong to their publishers
 and artists. The line art comes from MekBay, and the logos from MekBay and Sarna, the BattleTech wiki. They
@@ -76,8 +79,8 @@ every interface but still answers only to `localhost`, so another device gets "f
 on a network address can take several seconds on some machines while Python looks the address up, and
 the server prints its address once it is ready.
 
-The server has no login. Only start it on a network address on a network you trust, since anyone who can
-reach the port can read and change the collection.
+The single-user server has no login. Only start it on a network address on a network you trust, since anyone who can
+reach the port can read and change the collection. For sign-in, use the hosted version.
 
 The global `--db` option goes before the command and works with `serve`:
 `python3 -m batchall --db /path/to/other.db serve`. Setting `BATCHALL_DB` (or `BATCHALL_DATA_DIR`) as shown above does the same.

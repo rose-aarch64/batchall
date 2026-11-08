@@ -117,6 +117,7 @@ def shared_view(request, token, path):
     if owner is None:
         return _not_found()
     shared_db = settings.BATCHALL_SHARED_DB
+    # db.is_multiuser is not checked: a server that is not set up has no user file either, so it gets the same 404.
     if not db.user_db_path(shared_db, owner.id).is_file():
         return _not_found()
 

@@ -72,10 +72,37 @@ class SharedApiTests(ShareFixture):
             path = pattern.pattern.strip("^$").replace(r"(\d+)", str(self.mini)).replace(r"([^/]+)", "u-atlas")
             with self.subTest(method=method, path=path):
                 response = self.client.generic(method, f"{self.base}{path}", b"{}", content_type="application/json")
-                self.assertIn(response.status_code, (404, 405), f"{method} {path}")
+                self.assertEqual(response.status_code, 405, f"{method} {path}")
                 checked += 1
         self.assertGreater(checked, 20)
         self.assertEqual(self.snapshot_alice(), before)
+
+    def test_shared_responses_are_not_stored_or_referred(self):
+        response = self.client.get(f"{self.base}/api/collection")
+        self.assertEqual(response["Cache-Control"], "no-store")
+        self.assertEqual(response["Referrer-Policy"], "no-referrer")
+        self.assertEqual(self.client.get(f"{self.base}/")["Referrer-Policy"], "no-referrer")
+
+    def test_deleting_the_owner_account_ends_the_link(self):
+        client = Client(enforce_csrf_checks=True)
+        client.get("/api/auth/me")
+        client.force_login(self.alice)
+        response = client.delete(
+            "/api/auth/account",
+            {"password": PASSWORD, "confirm": "alice"},
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=client.cookies["csrftoken"].value,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        response = self.client.get(f"{self.base}/api/collection")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.content, self.client.get("/s/nope/api/collection").content)
+
+    def test_unusual_verbs_on_an_allowed_path_are_405(self):
+        for method in ("HEAD", "OPTIONS", "TRACE", "PUT"):
+            with self.subTest(method=method):
+                response = self.client.generic(method, f"{self.base}/api/collection")
+                self.assertEqual(response.status_code, 405)
 
     def test_signed_in_owner_cannot_write_through_the_link(self):
         self.client.force_login(self.alice)

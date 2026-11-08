@@ -282,9 +282,11 @@ def connect_user(user_id, path=None):
 def connect_user_readonly(user_id, path=None):
     """Open one user's database for reading only, with the shared database attached as ``shared``.
 
-    Both files are opened ``mode=ro``, so nothing here can write to them. No pragma that writes, no
-    schema script and no migration runs, and a missing user file raises ``FileNotFoundError`` instead
-    of being created.
+    Both files are opened ``mode=ro``, so the database contents are never modified. No pragma that
+    writes, no schema script and no migration runs, and a missing user file raises
+    ``FileNotFoundError`` instead of being created. SQLite may still create the ``-wal`` and ``-shm``
+    sidecar files, so the directory must be writable: in a read-only directory the open fails with
+    ``attempt to write a readonly database``.
     """
     shared_path = Path(path or config.DB_PATH)
     target = user_db_path(shared_path, user_id)

@@ -280,9 +280,11 @@ A signed-in user can let other people look at their collection without an accoun
 - **New link** replaces it. The old link stops working at once.
 - **Turn off** removes the link. Creating one later gives a different address.
 
-Anyone with the link gets the normal view of that collection with every edit control removed. They see all of it: minis, notes, tags, photos and saved forces. They can use Build for me and the force tray, but nothing they do is saved. The server refuses every write on a shared address and opens the owner's data read-only.
+Anyone with the link gets the normal view of that collection with every edit control removed. They see all of it: minis, notes, tags, photos and saved forces. They can use Build for me and the force tray, but nothing they do is saved. The server refuses every write on a shared address and opens the owner's data read-only. The one request it accepts besides reads is Build for me, which stores nothing.
 
 The token is long and random, so it cannot be guessed. It is not a password, though: anyone who has the link can look. Treat it like a private URL. If it gets passed further than you meant, make a new link or turn it off.
+
+After a link is turned off, a browser that already opened it can keep showing its images (photos, logos and art) for up to a day from its cache. The link also appears in web server and proxy access logs, so keep it out of any logs you share.
 
 Local mode has no accounts and no sharing.
 

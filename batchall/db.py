@@ -279,6 +279,23 @@ def connect_user(user_id, path=None):
     return conn
 
 
+def connect_user_readonly(user_id, path=None):
+    """Open one user's database for reading only, with the shared database attached as ``shared``.
+
+    Both files are opened ``mode=ro``, so nothing here can write to them. No pragma that writes, no
+    schema script and no migration runs, and a missing user file raises ``FileNotFoundError`` instead
+    of being created.
+    """
+    shared_path = Path(path or config.DB_PATH)
+    target = user_db_path(shared_path, user_id)
+    if not target.is_file():
+        raise FileNotFoundError(f"no database for user {int(user_id)} at {target}")
+    conn = sqlite3.connect(f"{target.resolve().as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("ATTACH DATABASE ? AS shared", (f"{shared_path.resolve().as_uri()}?mode=ro",))
+    return conn
+
+
 def _migrate(conn):
     """Bring databases created by earlier versions up to the current schema."""
     _migrate_shared(conn)

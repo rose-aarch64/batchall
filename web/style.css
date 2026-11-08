@@ -414,6 +414,12 @@ body.view-cards .table-wrap { display: none; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 button.danger-fill { background: var(--accent); border-color: var(--accent); }
 
+/* Owner's share link dialog */
+.share-link { display: flex; gap: 10px; margin-bottom: 10px; }
+.share-link input { flex: 1; min-width: 0; }
+.share-note { margin: 0 0 18px; font-size: 13px; }
+.modal.share .modal-actions { flex-wrap: wrap; }
+
 /* Unit names open the detail panel */
 button.unit-link {
   background: none; border: 0; padding: 0; text-align: left; color: inherit; font: inherit; font-weight: inherit;

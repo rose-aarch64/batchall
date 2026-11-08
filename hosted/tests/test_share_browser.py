@@ -4,6 +4,9 @@ import json
 import sys
 import time
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from django.conf import settings
@@ -15,7 +18,8 @@ sys.path.insert(0, str(ROOT / "tests"))
 from browser import Browser, chrome_path, is_visible  # noqa: E402
 
 from batchall import collection, copies, db  # noqa: E402
-from hosted.tests.share_fixture import ShareFixture  # noqa: E402
+from hosted import sharing  # noqa: E402
+from hosted.tests.share_fixture import PASSWORD, ShareFixture  # noqa: E402
 
 WAIT_SECONDS = 10
 
@@ -202,3 +206,121 @@ class ShareBrowserTests(LiveServerTestCase):
         self.assertFalse(is_visible(b, "#owner-name"))
         self.assertIn("✎", button_texts(b, "#roster td.actions button"))
         self.assertEqual(b.console_errors(), [])
+
+    def test_share_button_is_absent_on_the_shared_page(self):
+        b = self.open_shared()
+        self.assertFalse(b.js("!!document.querySelector('#share-open')"))
+
+
+@unittest.skipUnless(chrome_path(), "Chrome is not installed")
+class ShareControlTests(LiveServerTestCase):
+    """The owner's Share button: signed in through the real login page, with no link to start with."""
+
+    setUp_fixture = ShareFixture.setUp
+    seed_alice = ShareFixture.seed_alice
+    seed_bob = ShareFixture.seed_bob
+    alice_rows = ShareFixture.alice_rows
+
+    def setUp(self):
+        self.setUp_fixture()
+        sharing.revoke_link(self.alice)
+
+    def open(self, url, width=1280, height=900, mobile=False, ready=None):
+        b = Browser(width, height, mobile=mobile)
+        b.__enter__()
+        self.addCleanup(b.__exit__, None, None, None)
+        b.open(url, ready=ready)
+        return b
+
+    def sign_in(self, width=1280, height=900, mobile=False):
+        b = self.open(f"{self.live_server_url}/login.html", width, height, mobile,
+                      ready="!!document.querySelector('#signin-handle')")
+        b.type_into("#signin-handle", "alice")
+        b.type_into("#signin-password", PASSWORD)
+        b.js("document.querySelector('#signin-form button[type=submit]').click(); 0")
+        self.assertTrue(wait_for(b, "location.pathname === '/' && !!document.querySelector('#share-open')"))
+        # The login page's own 401 probe is expected, so only what happens from here on counts.
+        b.ws.events = [e for e in b.ws.events if e["method"] not in ("Runtime.consoleAPICalled", "Log.entryAdded")]
+        return b
+
+    def dialog_url(self, b):
+        return b.js("document.querySelector('#share-url').value")
+
+    def create_link(self, b, which="create"):
+        self.assertTrue(wait_for(b, f"!!document.querySelector('[data-share={which}]')"))
+        b.click(f'[data-share="{which}"]')
+        self.assertTrue(wait_for(b, "!!document.querySelector('#share-url') && "
+                                    "document.querySelector('#share-url').value !== ''"))
+        return self.dialog_url(b)
+
+    def rows_load(self, url):
+        # A revoked link never renders the collection, so wait for rows or for the error toast, whichever comes first.
+        page = self.open(url, ready="document.readyState === 'complete'")
+        self.assertTrue(wait_for(page, "document.querySelectorAll('#roster tbody tr').length >= 1 || "
+                                       "!document.querySelector('#roster') || "
+                                       "(!!document.querySelector('#toast') && !document.querySelector('#toast').hidden)"))
+        return page.js("document.querySelectorAll('#roster tbody tr').length") >= 1
+
+    def status_of(self, url):
+        try:
+            with urllib.request.urlopen(f"{self.live_server_url}{urllib.parse.urlparse(url).path}api/collection") as r:
+                return r.status
+        except urllib.error.HTTPError as err:
+            return err.code
+
+    def test_owner_can_create_and_revoke(self):
+        b = self.sign_in()
+        b.click("#share-open")
+        self.assertTrue(wait_for(b, "!!document.querySelector('[data-share=create]')"))
+        self.assertFalse(b.js("!!document.querySelector('#share-url, [data-share=off], [data-share=copy]')"))
+        url = self.create_link(b)
+        origin = b.js("location.origin")
+        self.assertTrue(url.startswith(origin + "/s/"), url)
+        self.assertEqual(self.status_of(url), 200)
+        self.assertTrue(self.rows_load(url))
+        self.assertTrue(b.js("document.querySelector('#share-url').readOnly"))
+        for which in ("new", "off", "copy"):
+            self.assertTrue(b.js(f"!!document.querySelector('[data-share={which}]')"), which)
+        b.click('[data-share="off"]')
+        self.assertTrue(wait_for(b, "!!document.querySelector('[data-share=create]') && !document.querySelector('#share-url')"))
+        self.assertEqual(self.status_of(url), 404)
+        self.assertFalse(self.rows_load(url))
+        self.assertEqual(b.console_errors(), [])
+
+    def test_new_link_replaces_the_old_one(self):
+        b = self.sign_in()
+        b.click("#share-open")
+        old = self.create_link(b)
+        b.click('[data-share="new"]')
+        self.assertTrue(wait_for(b, f"document.querySelector('#share-url').value !== {json.dumps(old)}"))
+        new = self.dialog_url(b)
+        self.assertNotEqual(new, old)
+        self.assertEqual(self.status_of(old), 404)
+        self.assertEqual(self.status_of(new), 200)
+        self.assertTrue(self.rows_load(new))
+        self.assertIn("old link", b.js("document.querySelector('.modal').textContent"))
+
+    def test_dialog_shows_an_existing_link_and_copy_toasts(self):
+        link = sharing.create_link(self.alice)
+        b = self.sign_in()
+        b.ws.send("Browser.grantPermissions", permissions=["clipboardReadWrite", "clipboardSanitizedWrite"],
+                  origin=self.live_server_url)
+        b.ws.send("Emulation.setFocusEmulationEnabled", enabled=True)  # headless pages are not focused otherwise
+        b.click("#share-open")
+        self.assertTrue(wait_for(b, "!!document.querySelector('#share-url')"))
+        self.assertTrue(self.dialog_url(b).endswith(f"/s/{link.token}/"))
+        b.click('[data-share="copy"]')
+        self.assertTrue(wait_for(b, "/copied/i.test(document.querySelector('#toast').textContent)"),
+                        b.js("document.querySelector('#toast').textContent"))
+
+    def test_dialog_fits_a_phone(self):
+        b = self.sign_in(390, 844, mobile=True)
+        b.click("#share-open")
+        self.create_link(b)
+        self.assertEqual(b.js("document.documentElement.scrollWidth <= innerWidth"), True)
+        self.assertTrue(b.js(
+            "(() => { const r = document.querySelector('.modal').getBoundingClientRect(); "
+            "return r.left >= 0 && r.right <= innerWidth; })()"))
+        self.assertTrue(b.js(
+            "(() => { const r = document.querySelector('#account').getBoundingClientRect(); "
+            "return r.left >= 0 && r.right <= innerWidth; })()"))

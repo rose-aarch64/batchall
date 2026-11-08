@@ -2489,9 +2489,52 @@ function showAccount(user) {
   const box = $("account");
   box.replaceChildren(
     h("span", { class: "account-name" }, user.display_name || user.handle),
+    h("button", { type: "button", id: "share-open", onclick: openShareDialog }, "Share"),
     h("button", { type: "button", id: "sign-out", onclick: signOut }, "Sign out"),
   );
   box.hidden = false;
+}
+
+// The owner's share link dialog. `url` is the path of the current link, or null when sharing is off.
+async function openShareDialog() {
+  const body = h("div", { class: "share-body" });
+  const box = h("div", { class: "modal share", role: "dialog", "aria-modal": "true", "aria-label": "Share your collection" },
+    h("p", { class: "modal-text" }, "Anyone with the link can view this collection. They cannot change it."),
+    body);
+  const modal = openModal(box);
+
+  const call = (method) => guarded(async () => render((await api(method, "/api/auth/share", method === "DELETE" ? undefined : {})).url));
+  const copy = async (input) => {
+    input.select();
+    try {
+      await navigator.clipboard.writeText(input.value);
+      toast("Link copied");
+    } catch (err) {
+      toast("Press Ctrl+C to copy the selected link");
+    }
+  };
+  const act = (which, label, method, extra = {}) =>
+    h("button", { type: "button", "data-share": which, onclick: () => call(method), ...extra }, label);
+
+  function render(url) {
+    if (!url) {
+      body.replaceChildren(
+        h("div", { class: "modal-actions" }, act("create", "Create link", "POST", { class: "primary" })));
+      return;
+    }
+    const input = h("input", { type: "text", id: "share-url", readonly: true, "aria-label": "Share link", value: location.origin + url });
+    body.replaceChildren(
+      h("div", { class: "share-link" }, input,
+        h("button", { type: "button", "data-share": "copy", class: "primary", onclick: () => copy(input) }, "Copy")),
+      h("p", { class: "share-note muted" }, "Making a new link stops the old link from working."),
+      h("div", { class: "modal-actions" },
+        act("new", "New link", "POST"),
+        act("off", "Turn off", "DELETE", { class: "danger-fill" })));
+    input.focus();
+    input.select();
+  }
+
+  await guarded(async () => render((await api("GET", "/api/auth/share")).url));
 }
 
 // A shared page names whose collection it is in the top bar. The visitor has no account, so #account stays hidden.

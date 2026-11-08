@@ -1,5 +1,13 @@
 "use strict";
 
+// A share link serves this page under /s/<token>/ and its API under the same prefix. The page is then a
+// read-only view of the link owner's collection: edit controls are not drawn, and api() refuses writes.
+const SHARE_BASE = (location.pathname.match(/^\/s\/[A-Za-z0-9_.\-]+/) || [""])[0];
+const SHARED = SHARE_BASE !== "";
+const apiUrl = (path) => SHARE_BASE + path;
+// Set before anything is drawn, so the stylesheet hides the page's own edit controls from the first paint.
+if (SHARED) document.body.classList.add("shared");
+
 const state = {
   meta: null,
   items: [],
@@ -218,7 +226,11 @@ function csrfToken() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+// The force builder stores nothing, so it is the one request other than a read that a shared page may send.
+const sharedMayRequest = (method, path) => method === "GET" || (method === "POST" && path === "/api/build");
+
 async function api(method, path, body) {
+  if (SHARED && !sharedMayRequest(method, path)) throw new Error("read-only");
   const opts = { method, headers: {} };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
@@ -227,8 +239,8 @@ async function api(method, path, body) {
   // The hosted server sets this cookie and requires it back on writes. The local server never sets it.
   const token = csrfToken();
   if (method !== "GET" && token) opts.headers["X-CSRFToken"] = token;
-  const res = await fetch(path, opts);
-  if (res.status === 401 && location.pathname !== "/login.html") {
+  const res = await fetch(apiUrl(path), opts);
+  if (res.status === 401 && !SHARED && location.pathname !== "/login.html") {
     location.href = "/login.html";
     throw new Error("sign in required");
   }
@@ -349,7 +361,7 @@ function boxSource(addsOnPick) {
         .slice(0, 4)
         .map((b) => ({ type: "own", name: b.box, entries: b.entries }));
       let official = [];
-      if (t && state.meta.box_catalog) {
+      if (t && state.meta.box_catalog && !SHARED) { // the shared routes do not serve the box catalog search
         const found = await api("GET", "/api/box-catalog?limit=8&q=" + encodeURIComponent(term));
         official = found.map((b) => ({ type: "official", ...b }));
       }
@@ -609,6 +621,9 @@ function kindLabel(item) {
 
 function emptyMessage() {
   if (state.items.length) return "";
+  if (SHARED) {
+    return Object.values(currentFilters()).some(Boolean) ? "Nothing in this collection matches these filters." : "This collection is empty.";
+  }
   return Object.values(currentFilters()).some(Boolean)
     ? "Nothing in your collection matches these filters."
     : "Your collection is empty. Use Add units to search the catalog, or Import to paste a list.";
@@ -650,7 +665,7 @@ function factionIcon(name) {
   const faction = state.meta.factions.find((f) => f.has_icon && f.name.toLowerCase() === key);
   if (!faction) return null;
   return h("img", {
-    class: "faction-icon", src: `/api/faction-icon/${faction.id}`, alt: "", title: faction.name, loading: "lazy",
+    class: "faction-icon", src: apiUrl(`/api/faction-icon/${faction.id}`), alt: "", title: faction.name, loading: "lazy",
     onerror: (e) => e.target.remove(),
   });
 }
@@ -693,7 +708,7 @@ function stripStyle(copy) {
   return color && HEX6.test(color) ? `--strip: ${color}; --strip-text: ${textOnColor(color)}` : null;
 }
 
-const companyLogoUrl = (logo) => `/api/company-logos/image?name=${encodeURIComponent(logo.name)}&v=${encodeURIComponent(logo.version)}`;
+const companyLogoUrl = (logo) => apiUrl(`/api/company-logos/image?name=${encodeURIComponent(logo.name)}&v=${encodeURIComponent(logo.version)}`);
 
 // The logo for a company name: the one you saved, else MekBay's faction logo when the company is also a faction.
 function companyIcon(name) {
@@ -1009,11 +1024,13 @@ async function removeMini(item, mini) {
 }
 
 function copyActions(item, copy, quickPaint = false) {
+  const toTray = h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray");
+  if (SHARED) return [toTray]; // the tray is the visitor's own, so it is the one action left
   if (state.editingCopy === copy.id) {
     return h("button", { class: "icon primary", title: "Finish editing", onclick: finishEditing }, "Done");
   }
   return [
-    h("button", { class: "icon", title: "Add one to the force tray", onclick: () => trayAdd(item.id, 1) }, "+ tray"),
+    toTray,
     " ",
     quickPaint ? paintToggle(copy) : null,
     quickPaint ? " " : null,
@@ -1032,6 +1049,7 @@ function copyActions(item, copy, quickPaint = false) {
 // loses focus or Escape is pressed. A material typed in the editor that is not one of the usual ones
 // stays in the list so it keeps showing.
 function materialControl(mini) {
+  if (SHARED) return mini.material ? h("div", {}, h("span", { class: "material-static" }, mini.material)) : null;
   const names = !mini.material || MATERIALS.includes(mini.material) ? MATERIALS : [...MATERIALS, mini.material];
   const holder = h("div", { class: "material-control" });
   const show = () => holder.replaceChildren(h("button", {
@@ -1277,24 +1295,25 @@ function buildMiniRow(item, mini) {
   const editing = state.editingCopy === mini.id;
   const detail = isNamed(mini) ? copyLine(mini) : "";
   return h("tr", { class: isNamed(mini) ? "copy-line" : "mini-line" },
-    h("td", { class: "sel-cell" }, selectBox(item, mini)),
+    h("td", { class: "sel-cell" }, SHARED ? null : selectBox(item, mini)),
     h("td", {}, nameLink(item),
       editing ? copyEditor(item, mini)
         : (detail || mini.tag) ? h("div", { class: "copy-label", title: mini.note || null }, companyIcon(mini.company), factionIcon(mini.faction), detail, detail && mini.tag ? " " : null, tagPill(mini)) : null),
     h("td", {}, kindLabel(item)),
-    h("td", {}, h("input", {
+    // A shared page shows the box, material and painted state as text. The owner edits them in place.
+    h("td", {}, SHARED ? copyBox(item, mini) || "" : h("input", {
       type: "text", class: "box-input", value: mini.box, "data-suggest": "box", "data-entry": item.id, autocomplete: "off",
       placeholder: item.box || "none", "aria-label": `Box for ${copyName(mini)}`,
       onchange: (e) => setCopy(mini, { box: e.target.value }),
     })),
     h("td", { class: "num" }, item.tons == null ? "" : Number(item.tons).toString()),
     h("td", { class: "num" }, item.bv),
-    h("td", {}, h("input", {
+    h("td", {}, SHARED ? mini.material : h("input", {
       type: "text", class: "box-input", value: mini.material, list: "material-options", autocomplete: "off",
       placeholder: "none", "aria-label": `Material of ${copyName(mini)}`,
       onchange: (e) => setCopy(mini, { material: e.target.value }),
     })),
-    h("td", { class: "num" }, h("input", {
+    h("td", { class: "num" }, SHARED ? (mini.painted ? "Yes" : "No") : h("input", {
       type: "checkbox", checked: mini.painted, "aria-label": `Painted: ${copyName(mini)}`,
       onchange: (e) => setCopy(mini, { painted: e.target.checked }),
     })),
@@ -1318,7 +1337,7 @@ function buildMiniCard(item, mini) {
   remove.innerHTML = CIRCLE_X_SVG;
   const stats = [item.model || null, item.kind === "mech" ? null : kindLabel(item), `${item.tons ?? "?"}t`, `${item.bv} BV`];
   return h("article", { class: "mini-card" + (isNamed(mini) ? " is-copy" : "") + (editing ? " is-editing" : "") + (state.selected.has(mini.id) ? " is-selected" : "") },
-    h("div", { class: "sel-bar" },
+    SHARED ? null : h("div", { class: "sel-bar" }, // it holds only edit controls, so a shared page leaves it off
       selectBox(item, mini),
       h("div", { class: "sel-title" }), // empty: the mech's name is in the strip under the photo
       remove),
@@ -1499,7 +1518,7 @@ function companyBanner(name, list, collapsed, toggle) {
   const logo = state.companyLogos?.get(companyKey(name));
   const ids = minis.map((m) => m.id);
   return h("div", { class: "group-head-row company-head", style: `--strip: ${bg}; --strip-text: ${textOnColor(bg)}` },
-    scopeCheckbox(`Select every mini in ${name}`, ids),
+    SHARED ? null : scopeCheckbox(`Select every mini in ${name}`, ids),
     h("button", { class: "group-toggle company-banner", "aria-expanded": String(!collapsed), onclick: toggle },
       h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"),
       h("span", { class: "banner-logo-slot" }, logo
@@ -1533,7 +1552,7 @@ function groupHeader(name, list, collapsed) {
   };
   const ids = list.flatMap((item) => minisIn(item, groupScope(name)).map((m) => m.id));
   return h("div", { class: "group-head-row" },
-    scopeCheckbox(`Select every mini in ${name}`, ids),
+    SHARED ? null : scopeCheckbox(`Select every mini in ${name}`, ids),
     h("button", { class: "group-toggle", "aria-expanded": String(!collapsed), onclick: toggle },
       h("span", { class: "chev", "aria-hidden": "true" }, collapsed ? "▸" : "▾"), " ",
       h("strong", {}, name), " ",
@@ -1588,7 +1607,7 @@ function applyCrop(img, photo, zoom, cx, cy) {
   return g;
 }
 
-const miniPhotoUrl = (mini) => `/api/minis/${mini.id}/photo?v=${encodeURIComponent(mini.photo.version)}`;
+const miniPhotoUrl = (mini) => apiUrl(`/api/minis/${mini.id}/photo?v=${encodeURIComponent(mini.photo.version)}`);
 
 function miniPhotoImage(mini) {
   const img = h("img", { class: "mini-photo", src: miniPhotoUrl(mini), alt: "", loading: "lazy", draggable: "false" });
@@ -1735,6 +1754,7 @@ function miniPhotoFrame(item, mini) {
     class: "photo clickable" + (mini.photo ? " has-photo" : item.has_art ? " has-art" : ""),
     onclick: () => showUnitDetail(item.unit_uuid, mini),
   }, mini.photo ? miniPhotoImage(mini) : artImage(item), mini.painted ? paintBadge() : null);
+  if (SHARED) return frame; // no photo can be dropped on a shared page
   frame.addEventListener("dragover", (e) => {
     if ([...(e.dataTransfer?.items || [])].some((i) => i.kind === "file")) { e.preventDefault(); frame.classList.add("drop-target"); }
   });
@@ -1753,7 +1773,7 @@ function artImage(item) {
   const placeholder = () => h("span", { class: "no-art" }, "No art yet");
   if (!item.has_art) return placeholder();
   return h("img", {
-    src: `/api/art/${encodeURIComponent(item.unit_uuid)}`, loading: "lazy", alt: "", // the name sits right beside it
+    src: apiUrl(`/api/art/${encodeURIComponent(item.unit_uuid)}`), loading: "lazy", alt: "", // the name sits right beside it
     onerror: (e) => {
       e.target.parentElement?.classList.remove("has-art");
       e.target.replaceWith(placeholder());
@@ -2139,7 +2159,7 @@ function renderForces() {
     list.append(
       h("li", { class: "force-item" + (state.tray.forceId === force.id ? " active" : ""), onclick: () => loadForceIntoTray(force) },
         h("div", { class: "name" }, force.name,
-          h("button", { class: "icon danger", title: "Delete force", onclick: (e) => { e.stopPropagation(); deleteForce(force); } }, "×")),
+          SHARED ? null : h("button", { class: "icon danger", title: "Delete force", onclick: (e) => { e.stopPropagation(); deleteForce(force); } }, "×")),
         h("div", { class: "muted small" }, detail),
         force.warnings.length ? h("div", { class: "over small" }, force.warnings[0]) : null,
         force.count ? h("div", { class: "force-actions" },
@@ -2443,6 +2463,7 @@ function setupFilterSheet() {
 // on the page, so "forces" shows the collection view there. On a phone, CSS keyed on body[data-tab]
 // decides what each tab shows.
 function setTab(name) {
+  if (SHARED && name === "import") return; // a shared page has no Import tab
   document.body.dataset.tab = name;
   const wide = name === "import" ? "import" : "collection";
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === wide));
@@ -2473,6 +2494,14 @@ function showAccount(user) {
   box.hidden = false;
 }
 
+// A shared page names whose collection it is in the top bar. The visitor has no account, so #account stays hidden.
+function showOwner(owner) {
+  const title = `${owner || "Shared"}'s collection`;
+  $("owner-name").textContent = title;
+  $("owner-name").hidden = false;
+  document.title = `${title} · Batchall`;
+}
+
 async function signOut() {
   await guarded(async () => {
     await api("POST", "/api/auth/logout", {});
@@ -2483,7 +2512,8 @@ async function signOut() {
 (async function init() {
   await guarded(async () => {
     const me = await api("GET", "/api/auth/me");
-    if (me.mode !== "local") showAccount(me);
+    if (SHARED) showOwner(me.owner);
+    else if (me.mode !== "local") showAccount(me);
     state.meta = await api("GET", "/api/meta");
     await loadCompanyLogos();
     loadPrefs();

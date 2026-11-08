@@ -31,7 +31,7 @@ class ShareLinkTests(TestCase):
         link = sharing.create_link(self.alice)
         pk = link.pk
         for bad in ["", ".", f"{pk}.", f".{link.secret}", f"x.{link.secret}", f"{pk}.wrong",
-                    f"{pk}.{link.secret}x", "9" * 40 + ".abc", "é.ü", "a" * 5000,
+                    f"{pk}.{link.secret}x", "9" * 40 + ".abc", "9" * 5000 + ".abc","é.ü", "a" * 5000,
                     f"{pk}.{link.secret}.extra"]:
             self.assertIsNone(sharing.resolve(bad), bad)
 

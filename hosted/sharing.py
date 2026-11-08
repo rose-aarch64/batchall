@@ -35,6 +35,8 @@ def resolve(token):
     pk_text, dot, secret = token.partition(".")
     if not dot or not pk_text.isascii() or not pk_text.isdigit() or not secret:
         return None
+    if len(pk_text) > len(str(_MAX_PK)):
+        return None
     pk = int(pk_text)
     if pk > _MAX_PK:
         return None

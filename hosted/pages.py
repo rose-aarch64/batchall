@@ -16,7 +16,7 @@ def page(request, path):
     try:
         target = (config.WEB_DIR / rel).resolve()
         found = web_dir in target.parents and target.is_file()
-    except ValueError:  # an embedded null byte
+    except (ValueError, OSError):  # an embedded null byte, or a name too long for the file system
         found = False
     if not found:
         return JsonResponse({"error": "not found"}, status=HTTPStatus.NOT_FOUND)

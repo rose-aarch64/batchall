@@ -134,6 +134,47 @@ class SharedApiTests(ShareFixture):
         self.assertTrue(shared.build_slot.acquire(blocking=False))
         shared.build_slot.release()
 
+    def test_a_burst_of_api_requests_is_not_throttled(self):
+        for _ in range(150):
+            response = self.client.get(f"{self.base}/api/minis/{self.mini}/photo")
+            self.assertEqual(response.status_code, 200)
+
+    def flood(self, ip):
+        for _ in range(shared.API_REQUESTS_PER_WINDOW):
+            shared.api_limiter.record_failure(ip)
+
+    def test_a_flood_from_one_address_gets_429(self):
+        self.flood("10.0.0.1")
+        response = self.client.get(f"{self.base}/api/collection", REMOTE_ADDR="10.0.0.1")
+        self.assertEqual(response.status_code, 429)
+        self.assertIn("error", response.json())
+        self.assertGreater(int(response["Retry-After"]), 0)
+
+    def test_the_limit_counts_requests_up_to_the_ceiling(self):
+        for _ in range(shared.API_REQUESTS_PER_WINDOW - 1):
+            shared.api_limiter.record_failure("10.0.0.1")
+        self.assertEqual(self.client.get(f"{self.base}/api/collection", REMOTE_ADDR="10.0.0.1").status_code, 200)
+        self.assertEqual(self.client.get(f"{self.base}/api/collection", REMOTE_ADDR="10.0.0.1").status_code, 429)
+
+    def test_a_flood_does_not_throttle_another_address(self):
+        self.flood("10.0.0.1")
+        self.assertEqual(self.client.get(f"{self.base}/api/collection", REMOTE_ADDR="10.0.0.2").status_code, 200)
+
+    def test_page_and_assets_are_not_throttled_or_counted(self):
+        self.flood("10.0.0.1")
+        for rel in ("", "app.js", "style.css"):
+            with self.subTest(rel=rel):
+                self.assertEqual(self.client.get(f"{self.base}/{rel}", REMOTE_ADDR="10.0.0.1").status_code, 200)
+        for _ in range(200):
+            self.client.get(f"{self.base}/app.js", REMOTE_ADDR="10.0.0.3")
+        self.assertEqual(shared.api_limiter.retry_after("10.0.0.3"), 0)
+        self.assertNotIn("10.0.0.3", shared.api_limiter._entries)
+
+    def test_owner_api_is_not_throttled(self):
+        self.flood("127.0.0.1")
+        self.client.force_login(self.alice)
+        self.assertEqual(self.client.get("/api/collection").status_code, 200)
+
     def test_build_needs_no_csrf_token(self):
         client = Client(enforce_csrf_checks=True)
         response = client.post(f"{self.base}/api/build", BUILD, content_type="application/json")

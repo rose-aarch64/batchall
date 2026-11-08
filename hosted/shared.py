@@ -12,7 +12,9 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from batchall import db, formations, server
+from batchall.ratelimit import RateLimiter
 from hosted import api, pages, sharing
+from hosted.authviews import client_ip
 
 # Every GET the shared page needs, plus the force builder, which stores nothing. Built from the
 # handler objects so a renamed handler fails at import instead of silently dropping out.
@@ -49,6 +51,14 @@ MAX_BUILD_SIZE = max(f.size for f in formations.FORMATIONS.values())
 MAX_BUILD_TARGET_BV = 50_000
 BUILD_RETRY_SECONDS = 5
 build_slot = threading.Semaphore(1)
+
+# Requests under /s/<token>/api/ per client address. Each request is recorded as a "failure", so an
+# address that makes this many in the window is locked out for the next window. The first load of a
+# large collection fetches an image or two per mini plus logos and icons, a few hundred requests, so
+# the ceiling sits well above that. The page and its static files are not counted.
+API_REQUESTS_PER_WINDOW = 1000
+API_WINDOW_SECONDS = 60
+api_limiter = RateLimiter(API_REQUESTS_PER_WINDOW, API_WINDOW_SECONDS, API_WINDOW_SECONDS)
 
 
 def _not_found():
@@ -94,6 +104,15 @@ def _build(request, api_path, open_conn):
 
 @csrf_exempt
 def shared_view(request, token, path):
+    if path.startswith("api/"):
+        ip = client_ip(request)
+        wait = api_limiter.retry_after(ip)
+        if wait:
+            response = api._error("too many requests, slow down", HTTPStatus.TOO_MANY_REQUESTS)
+            response["Retry-After"] = str(wait)
+            return response
+        api_limiter.record_failure(ip)
+
     owner = sharing.resolve(token)
     if owner is None:
         return _not_found()

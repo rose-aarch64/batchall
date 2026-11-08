@@ -14,6 +14,7 @@ from support import mark_multiuser, seed_catalog  # noqa: E402
 
 from batchall import collection, db, forces, photos, server  # noqa: E402
 from hosted import accounts, sharing  # noqa: E402
+from hosted.tests.limiters import reset_limiters  # noqa: E402
 
 PASSWORD = "correct horse battery"
 JPEG = b"\xff\xd8\xff\xe0" + b"fake photo"
@@ -21,6 +22,8 @@ JPEG = b"\xff\xd8\xff\xe0" + b"fake photo"
 
 class ShareFixture(TestCase):
     def setUp(self):
+        reset_limiters()
+        self.addCleanup(reset_limiters)
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.shared = Path(self._tmp.name) / "batchall.db"

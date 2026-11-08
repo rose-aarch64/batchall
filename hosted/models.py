@@ -25,3 +25,22 @@ class Invite(models.Model):
 
     def __str__(self):
         return f"Invite {self.pk}"
+
+
+class ShareLink(models.Model):
+    """A private read-only link to a user's collection. One per user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="share_link",
+    )
+    secret = models.CharField(max_length=43)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def token(self):
+        return f"{self.pk}.{self.secret}"
+
+    def __str__(self):
+        return f"ShareLink {self.pk}"

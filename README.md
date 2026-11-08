@@ -272,6 +272,20 @@ sqlite3 data/batchall.db ".backup /backups/batchall.db"
 sqlite3 data/users/1.db ".backup /backups/users-1.db"
 ```
 
+### Sharing a collection by link
+
+A signed-in user can let other people look at their collection without an account. Nothing is shared until its owner creates a link.
+
+- Click **Share** in the account box, then **Create link**. The dialog shows the link (`/s/<token>/`) with a Copy button.
+- **New link** replaces it. The old link stops working at once.
+- **Turn off** removes the link. Creating one later gives a different address.
+
+Anyone with the link gets the normal view of that collection with every edit control removed. They see all of it: minis, notes, tags, photos and saved forces. They can use Build for me and the force tray, but nothing they do is saved. The server refuses every write on a shared address and opens the owner's data read-only.
+
+The token is long and random, so it cannot be guessed. It is not a password, though: anyone who has the link can look. Treat it like a private URL. If it gets passed further than you meant, make a new link or turn it off.
+
+Local mode has no accounts and no sharing.
+
 ## Data
 
 Unit stats, BV, and faction availability come from MekBay's public data files at `db.mekbay.com`
